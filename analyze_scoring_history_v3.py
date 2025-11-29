@@ -2,7 +2,7 @@
 """
 Улучшенный скрипт для анализа исторических данных скоринга
 Рассчитывает результаты одновременно для LONG и SHORT позиций
-Version: 7.0 - UNIFIED PERIODS + DETERMINISTIC SEED:
+Version: 7.1 - UNIFIED PERIODS + DETERMINISTIC SEED + PUBLIC.CANDLES:
   ✅ #1: Корректный расчет max_drawdown от пика
   ✅ #2: Реалистичная цена входа (LONG ближе к high, SHORT ближе к low)
   ✅ #3: Статистический подход при одновременном срабатывании TP/SL (50/50)
@@ -15,24 +15,12 @@ Version: 7.0 - UNIFIED PERIODS + DETERMINISTIC SEED:
   ✅ #10: Добавлены индексы для быстрых запросов
   ✅ #11: Защита от деления на ноль
   ✅ #12: Унифицированные периоды с SQL функциями (v7.0)
+  ✅ #13: Миграция на public.candles для полного покрытия данных (v7.1)
+  ✅ #14: Исправлен запрос market_regime через sh_regime таблицу (v7.1)
 
 Обрабатывает сигналы за период, согласованный с SQL функциями анализа паттернов
-
-⚠️ ВРЕМЕННОЕ РЕШЕНИЕ:
-Скрипт использует fas_v2.market_data_aggregated вместо fas_v2.market_data_aggregated
-для получения рыночных данных.
-
-ПРИЧИНА:
-В fas_v2.market_data_aggregated отсутствуют данные для 520 из 630 торговых пар,
-что приводит к потере 82% сигналов. Данные присутствуют в старой схеме fas_v2.
-
-TODO:
-После завершения миграции всех данных в fas_v2.market_data_aggregated необходимо:
-1. Заменить fas_v2.market_data_aggregated на fas_v2.market_data_aggregated в методах:
-   - get_entry_price() (строка ~264)
-   - analyze_signal_both_directions() (строка ~615)
-2. Удалить эти комментарии с предупреждениями
 """
+
 
 import os
 import sys
@@ -302,19 +290,13 @@ class ImprovedScoringAnalyzer:
                 sh.combination_score,
                 mr.regime as market_regime
             FROM fas_v2.scoring_history sh
-            LEFT JOIN LATERAL (
-                SELECT regime
-                FROM fas_v2.market_regime mr
-                WHERE mr.timestamp <= sh.timestamp
-                    AND mr.timeframe = '4h'
-                ORDER BY mr.timestamp DESC
-                LIMIT 1
-            ) mr ON true
+            LEFT JOIN fas_v2.sh_regime shr ON shr.scoring_history_id = sh.id
+            LEFT JOIN fas_v2.market_regime mr ON mr.id = shr.signal_regime_id
             WHERE sh.timestamp >= %s
                 AND sh.timestamp <= %s
                 AND NOT EXISTS (
-                    SELECT 1 FROM web.scoring_history_results_v2 shr
-                    WHERE shr.scoring_history_id = sh.id
+                    SELECT 1 FROM web.scoring_history_results_v2 shr2
+                    WHERE shr2.scoring_history_id = sh.id
                 )
             ORDER BY sh.timestamp ASC
             LIMIT %s
@@ -333,25 +315,24 @@ class ImprovedScoringAnalyzer:
         ✅ ИСПРАВЛЕНО: Реалистичная цена входа с учетом направления
         - LONG входит ближе к high (75% от диапазона) - хуже для трейдера
         - SHORT входит ближе к low (25% от диапазона) - хуже для трейдера
-        Теперь работаем с 5-минутными свечами
+        Теперь работаем с 5-минутными свечами из public.candles (interval_id=1)
 
-        ⚠️ ВРЕМЕННОЕ РЕШЕНИЕ: Используем fas_v2.market_data_aggregated вместо fas_v2
-        ПРИЧИНА: В fas_v2.market_data_aggregated отсутствуют данные для 520 из 630 торговых пар
-        TODO: Вернуть использование fas_v2.market_data_aggregated после полной миграции данных
+        ✅ ИСПРАВЛЕНО v7.1: Используем public.candles для полного покрытия данных (1258 пар)
         """
         entry_time = signal_time + timedelta(minutes=self.config.entry_delay_minutes)
 
+
         query = """
             SELECT
-                timestamp,
+                to_timestamp(open_time/1000) as timestamp,
                 close_price,
                 high_price,
                 low_price
-            FROM fas_v2.market_data_aggregated
+            FROM public.candles
             WHERE trading_pair_id = %s
-                AND timeframe = '5m'
-                AND timestamp >= %s
-            ORDER BY timestamp ASC
+                AND interval_id = 1
+                AND to_timestamp(open_time/1000) >= %s
+            ORDER BY open_time ASC
             LIMIT 1
         """
 
@@ -707,22 +688,21 @@ class ImprovedScoringAnalyzer:
             entry_price_short = entry_data_short['entry_price']
 
             # Получаем историю цен за заданный период (5-минутные свечи)
-            # ⚠️ ВРЕМЕННО: Используем fas_v2.market_data_aggregated вместо fas_v2
-            # TODO: Заменить на fas_v2.market_data_aggregated после миграции данных
+            # ✅ ИСПРАВЛЕНО: Используем public.candles (interval_id=1) для полного покрытия данных
             # Используем время от LONG (они должны быть одинаковыми)
             # ✅ ИСПРАВЛЕНО: Убрана SQL injection уязвимость через f-string
             history_query = """
                 SELECT
-                    timestamp,
+                    to_timestamp(open_time/1000) as timestamp,
                     close_price,
                     high_price,
                     low_price
-                FROM fas_v2.market_data_aggregated
+                FROM public.candles
                 WHERE trading_pair_id = %s
-                    AND timeframe = '5m'
-                    AND timestamp >= %s
-                    AND timestamp <= %s + INTERVAL '1 hour' * %s
-                ORDER BY timestamp ASC
+                    AND interval_id = 1
+                    AND to_timestamp(open_time/1000) >= %s
+                    AND to_timestamp(open_time/1000) <= %s + INTERVAL '1 hour' * %s
+                ORDER BY open_time ASC
             """
 
             with self.conn.cursor() as cur:
@@ -1108,14 +1088,15 @@ class ImprovedScoringAnalyzer:
         """Основной процесс анализа"""
         start_time = datetime.now()
 
-        logger.info("🚀 Начало анализа исторических данных скоринга (v7.0 - UNIFIED PERIODS)")
+        logger.info("🚀 Начало анализа исторических данных скоринга (v7.1 - PUBLIC.CANDLES)")
         logger.info(f"📅 Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
         logger.info(f"✨ Окно анализа: {self.config.analysis_hours} часов с 5-минутными свечами")
         logger.info("✨ Расчет результатов одновременно для LONG и SHORT позиций")
         logger.info("✅ УНИФИЦИРОВАННЫЕ ПЕРИОДЫ: согласованы с SQL функциями")
         logger.info("✅ ДЕТЕРМИНИРОВАННЫЙ SEED: каждый сигнал имеет уникальный seed")
-        logger.warning("⚠️  ВРЕМЕННО: Используется fas_v2.market_data_aggregated (не fas_v2)")
-        logger.warning("⚠️  ПРИЧИНА: В fas_v2 отсутствуют данные для 520 торговых пар")
+        logger.info("✅ ПОЛНОЕ ПОКРЫТИЕ ДАННЫХ: используем public.candles (1258 торговых пар)")
+        logger.info("✅ ИСПРАВЛЕН MARKET_REGIME: корректный запрос через sh_regime таблицу")
+
 
         try:
             self.connect()
