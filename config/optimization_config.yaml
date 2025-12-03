@@ -1,0 +1,42 @@
+# Database credentials are in .env file (not here!)
+# See .env.example for template
+
+binance:
+  # Binance Futures Public API (no auth needed)
+  base_url: "https://fapi.binance.com"
+  
+  # Rate limiting (20% of max capacity)
+  # Binance max: 2400 weight/min, using only 480 (20%)
+  requests_per_minute: 480
+  weight_per_minute: 480
+  request_delay_ms: 125  # ~8 requests/second = 480/minute
+
+simulation:
+  # Parameter ranges
+  sl_range: [1, 2, 3, 4, 5, 6]
+  ts_activation_range: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  ts_callback_range: [0.5, 1.0, 1.5, 2.0]
+  
+  # Strategy filters
+  min_signals_per_strategy: 30
+  min_win_rate: 60.0
+  
+  # Processing
+  batch_size: 100  # Rows per DB transaction (prevents overload)
+  parallel_workers: 4  # Max parallel workers (limit for DB connections)
+  max_db_connections: 10  # Maximum concurrent DB connections
+  
+  # Candles
+  candles_per_signal: 1440  # 24 hours * 60 minutes
+  entry_offset_minutes: 17  # Entry time = signal + 17 min
+
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: logs/optimization.log
+  console: true
+
+output:
+  results_dir: results
+  report_file: optimization_report.md
+  charts_dir: results/charts
