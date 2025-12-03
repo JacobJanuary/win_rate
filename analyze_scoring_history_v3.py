@@ -2,25 +2,36 @@
 """
 Улучшенный скрипт для анализа исторических данных скоринга
 Рассчитывает результаты одновременно для LONG и SHORT позиций
-Version: 7.1 - UNIFIED PERIODS + DETERMINISTIC SEED + PUBLIC.CANDLES:
+Version: 6.3 - КРИТИЧЕСКИЕ ИСПРАВЛЕНИЯ:
   ✅ #1: Корректный расчет max_drawdown от пика
   ✅ #2: Реалистичная цена входа (LONG ближе к high, SHORT ближе к low)
   ✅ #3: Статистический подход при одновременном срабатывании TP/SL (50/50)
   ✅ #4: Валидация данных (проверка цен, аномалий)
   ✅ #5: Устранена SQL injection уязвимость
   ✅ #6: Исправлена транзакционная целостность
-  ✅ #7: Детерминированный random seed на уровне сигнала (v7.0)
+  ✅ #7: Добавлен random seed для воспроизводимости
   ✅ #8: Добавлены timeout'ы для БД
   ✅ #9: Улучшена обработка исключений
   ✅ #10: Добавлены индексы для быстрых запросов
   ✅ #11: Защита от деления на ноль
-  ✅ #12: Унифицированные периоды с SQL функциями (v7.0)
-  ✅ #13: Миграция на public.candles для полного покрытия данных (v7.1)
-  ✅ #14: Исправлен запрос market_regime через sh_regime таблицу (v7.1)
 
-Обрабатывает сигналы за период, согласованный с SQL функциями анализа паттернов
+Обрабатывает только последние 31 день с 5-минутными свечами
+
+⚠️ ВРЕМЕННОЕ РЕШЕНИЕ:
+Скрипт использует fas.market_data_aggregated вместо fas_v2.market_data_aggregated
+для получения рыночных данных.
+
+ПРИЧИНА:
+В fas_v2.market_data_aggregated отсутствуют данные для 520 из 630 торговых пар,
+что приводит к потере 82% сигналов. Данные присутствуют в старой схеме fas.
+
+TODO:
+После завершения миграции всех данных в fas_v2.market_data_aggregated необходимо:
+1. Заменить fas.market_data_aggregated на fas_v2.market_data_aggregated в методах:
+   - get_entry_price() (строка ~264)
+   - analyze_signal_both_directions() (строка ~615)
+2. Удалить эти комментарии с предупреждениями
 """
-
 
 import os
 import sys
@@ -99,8 +110,9 @@ class ImprovedScoringAnalyzer:
         self.error_count = 0
         self.new_signals_count = 0
         self.skipped_count = 0
-
-        # ✅ УДАЛЕНО: Глобальный random seed (теперь индивидуальный для каждого сигнала)
+        
+        # ✅ ДОБАВЛЕНО: Фиксированный seed для воспроизводимости результатов
+        random.seed(42)
 
     def _load_db_config(self, config_path: str) -> dict:
         """
@@ -224,60 +236,8 @@ class ImprovedScoringAnalyzer:
             self.conn.close()
             logger.info("🔌 Отключение от БД")
 
-    @staticmethod
-    def get_signal_seed(scoring_history_id: int) -> int:
-        """
-        Генерация детерминированного seed для сигнала
-
-        Args:
-            scoring_history_id: ID сигнала из scoring_history
-
-        Returns:
-            int: Детерминированный seed для random
-
-        Обеспечивает:
-            - Детерминированность: один ID = один seed
-            - Уникальность: разные ID = разные seed
-            - Воспроизводимость: повторный вызов с тем же ID = тот же seed
-        """
-        import hashlib
-
-        # Используем строку с префиксом для предотвращения коллизий
-        seed_string = f"scoring_history_id_{scoring_history_id}"
-
-        # hash() в Python 3 использует рандомизацию (PYTHONHASHSEED)
-        # hashlib.sha256() всегда детерминирован
-        hash_bytes = hashlib.sha256(seed_string.encode('utf-8')).digest()
-        seed = int.from_bytes(hash_bytes[:8], byteorder='big')
-
-        # Ограничиваем seed размером 32-bit int (требование random.seed)
-        seed = seed % (2**32)
-
-        return seed
-
     def get_unprocessed_signals(self, batch_size: int = 10000) -> List[Dict]:
-        """
-        Получение пакета необработанных сигналов
-        Использует согласованный период с SQL функциями анализа паттернов
-        """
-        # Получаем период через SQL функцию для консистентности
-        period_query = """
-            SELECT
-                period_start,
-                period_end,
-                days_count
-            FROM fas_v2.get_analysis_period('monthly')
-        """
-
-        with self.conn.cursor() as cur:
-            cur.execute(period_query)
-            period_info = cur.fetchone()
-
-        period_start = period_info['period_start']
-        period_end = period_info['period_end']
-
-        logger.info(f"📅 Analysis period: {period_start.date()} to {period_end.date()} ({period_info['days_count']} days)")
-
+        """Получение пакета необработанных сигналов старше 1 дня и не старше 31 дней"""
         query = """
             SELECT
                 sh.id as scoring_history_id,
@@ -290,20 +250,26 @@ class ImprovedScoringAnalyzer:
                 sh.combination_score,
                 mr.regime as market_regime
             FROM fas_v2.scoring_history sh
-            LEFT JOIN fas_v2.sh_regime shr ON shr.scoring_history_id = sh.id
-            LEFT JOIN fas_v2.market_regime mr ON mr.id = shr.signal_regime_id
-            WHERE sh.timestamp >= %s
-                AND sh.timestamp <= %s
+            LEFT JOIN LATERAL (
+                SELECT regime
+                FROM fas_v2.market_regime mr
+                WHERE mr.timestamp <= sh.timestamp
+                    AND mr.timeframe = '4h'
+                ORDER BY mr.timestamp DESC
+                LIMIT 1
+            ) mr ON true
+            WHERE sh.timestamp <= NOW() - INTERVAL '1 days'
+                AND sh.timestamp >= NOW() - INTERVAL '31 days'
                 AND NOT EXISTS (
-                    SELECT 1 FROM web.scoring_history_results_v2 shr2
-                    WHERE shr2.scoring_history_id = sh.id
+                    SELECT 1 FROM web.scoring_history_results_v2 shr
+                    WHERE shr.scoring_history_id = sh.id
                 )
             ORDER BY sh.timestamp ASC
             LIMIT %s
         """
 
         with self.conn.cursor() as cur:
-            cur.execute(query, (period_start, period_end, batch_size))
+            cur.execute(query, (batch_size,))
             signals = cur.fetchall()
 
         return signals
@@ -315,24 +281,25 @@ class ImprovedScoringAnalyzer:
         ✅ ИСПРАВЛЕНО: Реалистичная цена входа с учетом направления
         - LONG входит ближе к high (75% от диапазона) - хуже для трейдера
         - SHORT входит ближе к low (25% от диапазона) - хуже для трейдера
-        Теперь работаем с 5-минутными свечами из public.candles (interval_id=1)
+        Теперь работаем с 5-минутными свечами
 
-        ✅ ИСПРАВЛЕНО v7.1: Используем public.candles для полного покрытия данных (1258 пар)
+        ⚠️ ВРЕМЕННОЕ РЕШЕНИЕ: Используем fas.market_data_aggregated вместо fas_v2
+        ПРИЧИНА: В fas_v2.market_data_aggregated отсутствуют данные для 520 из 630 торговых пар
+        TODO: Вернуть использование fas_v2.market_data_aggregated после полной миграции данных
         """
         entry_time = signal_time + timedelta(minutes=self.config.entry_delay_minutes)
 
-
         query = """
             SELECT
-                to_timestamp(open_time/1000) as timestamp,
+                timestamp,
                 close_price,
                 high_price,
                 low_price
-            FROM public.candles
+            FROM fas.market_data_aggregated
             WHERE trading_pair_id = %s
-                AND interval_id = 1
-                AND to_timestamp(open_time/1000) >= %s
-            ORDER BY open_time ASC
+                AND timeframe = '5m'
+                AND timestamp >= %s
+            ORDER BY timestamp ASC
             LIMIT 1
         """
 
@@ -387,32 +354,15 @@ class ImprovedScoringAnalyzer:
             return None
 
     def calculate_trade_result(self, direction: str, entry_price: float,
-                               history: List[Dict], actual_entry_time: datetime,
-                               scoring_history_id: int) -> TradeResult:
+                               history: List[Dict], actual_entry_time: datetime) -> TradeResult:
         """
         Универсальный расчет результата торговли для указанного направления
-
-        Args:
-            direction: 'LONG' или 'SHORT'
-            entry_price: Цена входа
-            history: История свечей
-            actual_entry_time: Время входа
-            scoring_history_id: ID сигнала (для детерминированного random seed)
-
-        Returns:
-            TradeResult: Результат торговли
-
         ✅ ИСПРАВЛЕНО: Корректный расчет max_drawdown от пика
-        ✅ ИСПРАВЛЕНО: Детерминированный random seed на уровне сигнала
         """
         tp_percent = self.config.tp_percent
         sl_percent = self.config.sl_percent
         position_size = self.config.position_size
         leverage = self.config.leverage
-
-        # ✅ НОВОЕ: Устанавливаем детерминированный seed для этого сигнала
-        signal_seed = self.get_signal_seed(scoring_history_id)
-        random.seed(signal_seed)
 
         # Расчет уровней TP и SL
         if direction == 'LONG':
@@ -688,21 +638,22 @@ class ImprovedScoringAnalyzer:
             entry_price_short = entry_data_short['entry_price']
 
             # Получаем историю цен за заданный период (5-минутные свечи)
-            # ✅ ИСПРАВЛЕНО: Используем public.candles (interval_id=1) для полного покрытия данных
+            # ⚠️ ВРЕМЕННО: Используем fas.market_data_aggregated вместо fas_v2
+            # TODO: Заменить на fas_v2.market_data_aggregated после миграции данных
             # Используем время от LONG (они должны быть одинаковыми)
             # ✅ ИСПРАВЛЕНО: Убрана SQL injection уязвимость через f-string
             history_query = """
                 SELECT
-                    to_timestamp(open_time/1000) as timestamp,
+                    timestamp,
                     close_price,
                     high_price,
                     low_price
-                FROM public.candles
+                FROM fas.market_data_aggregated
                 WHERE trading_pair_id = %s
-                    AND interval_id = 1
-                    AND to_timestamp(open_time/1000) >= %s
-                    AND to_timestamp(open_time/1000) <= %s + INTERVAL '1 hour' * %s
-                ORDER BY open_time ASC
+                    AND timeframe = '5m'
+                    AND timestamp >= %s
+                    AND timestamp <= %s + INTERVAL '1 hour' * %s
+                ORDER BY timestamp ASC
             """
 
             with self.conn.cursor() as cur:
@@ -725,21 +676,18 @@ class ImprovedScoringAnalyzer:
                 return long_result, short_result
 
             # ✅ ИСПРАВЛЕНО: Рассчитываем результаты для обоих направлений с разными ценами входа
-            # ✅ ИСПРАВЛЕНО: Передаем scoring_history_id для детерминированного random seed
             long_result = self.calculate_trade_result(
                 'LONG',
                 entry_price_long,
                 history,
-                actual_entry_time_long,
-                signal['scoring_history_id']
+                actual_entry_time_long
             )
 
             short_result = self.calculate_trade_result(
                 'SHORT',
                 entry_price_short,
                 history,
-                actual_entry_time_short,
-                signal['scoring_history_id']
+                actual_entry_time_short
             )
 
             # Формируем результаты для сохранения
@@ -1087,27 +1035,16 @@ class ImprovedScoringAnalyzer:
     def run(self):
         """Основной процесс анализа"""
         start_time = datetime.now()
-
-        logger.info("🚀 Начало анализа исторических данных скоринга (v7.1 - PUBLIC.CANDLES)")
+        logger.info("🚀 Начало анализа исторических данных скоринга (v6.3 - PRODUCTION READY)")
         logger.info(f"📅 Время запуска: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
-        logger.info(f"✨ Окно анализа: {self.config.analysis_hours} часов с 5-минутными свечами")
+        logger.info(f"✨ Анализ последних 31 дня с {self.config.analysis_hours}-часовым окном и 5-минутными свечами")
         logger.info("✨ Расчет результатов одновременно для LONG и SHORT позиций")
-        logger.info("✅ УНИФИЦИРОВАННЫЕ ПЕРИОДЫ: согласованы с SQL функциями")
-        logger.info("✅ ДЕТЕРМИНИРОВАННЫЙ SEED: каждый сигнал имеет уникальный seed")
-        logger.info("✅ ПОЛНОЕ ПОКРЫТИЕ ДАННЫХ: используем public.candles (1258 торговых пар)")
-        logger.info("✅ ИСПРАВЛЕН MARKET_REGIME: корректный запрос через sh_regime таблицу")
-
+        logger.info("✅ КРИТИЧЕСКИЕ ИСПРАВЛЕНИЯ: SQL injection + транзакции + воспроизводимость + защита от ошибок")
+        logger.warning("⚠️  ВРЕМЕННО: Используется fas.market_data_aggregated (не fas_v2)")
+        logger.warning("⚠️  ПРИЧИНА: В fas_v2 отсутствуют данные для 520 торговых пар")
 
         try:
             self.connect()
-
-            # Получаем и логируем период анализа
-            with self.conn.cursor() as cur:
-                cur.execute("SELECT * FROM fas_v2.get_analysis_period('monthly')")
-                period_info = cur.fetchone()
-
-            logger.info(f"📊 Период анализа: {period_info['period_start'].date()} to {period_info['period_end'].date()}")
-            logger.info(f"📊 Количество дней: {period_info['days_count']}")
 
             batch_number = 0
             total_processed_in_run = 0
