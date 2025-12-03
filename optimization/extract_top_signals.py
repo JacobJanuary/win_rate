@@ -132,7 +132,9 @@ def extract_signals_for_strategy(db: DatabaseHelper, strategy):
     
     pattern_filter = ' OR '.join(pattern_conditions)
     
-    # Query signals
+    # Query signals with CORRECT market_regime join
+    # market_regime is GLOBAL (BTC market state), not per-pair
+    # Column is 'regime' not 'regime_type'
     query = f"""
         WITH signal_patterns_agg AS (
             SELECT 
@@ -155,28 +157,31 @@ def extract_signals_for_strategy(db: DatabaseHelper, strategy):
             SELECT 
                 spa.*,
                 shr.signal_type,
-                mr.regime_type as market_regime
+                mr.regime as market_regime
             FROM signal_patterns_agg spa
-            LEFT JOIN web.scoring_history_results_v2 shr ON shr.scoring_history_id = spa.signal_id
+            INNER JOIN web.scoring_history_results_v2 shr ON shr.scoring_history_id = spa.signal_id
             LEFT JOIN fas_v2.market_regime mr ON (
-                mr.trading_pair_symbol = spa.pair_symbol
-                AND mr.timeframe = '15m'
+                mr.timeframe = '15m'
                 AND mr.timestamp <= spa.signal_timestamp
                 AND mr.timestamp > spa.signal_timestamp - INTERVAL '1 hour'
             )
             WHERE shr.signal_type = '{signal_type}'
-                AND mr.regime_type = '{market_regime}'
+                AND (mr.regime = '{market_regime}' OR mr.regime IS NULL)
         )
         SELECT * FROM with_results
+        WHERE market_regime IS NOT NULL
         LIMIT 100
     """
     
     try:
         results = db.execute_query(query)
-        logger.info(f"Found {len(results)} signals for {strategy['patterns'][:50]}...")
+        logger.info(f"Found {len(results)} signals")
         return results
     except Exception as e:
         logger.error(f"Error extracting signals: {e}")
+        # Rollback transaction on error
+        if db.conn:
+            db.conn.rollback()
         return []
 
 
@@ -232,7 +237,14 @@ def main():
         
         logger.info(f"\n[{idx}/20] {strategy_name[:100]}...")
         
-        signals = extract_signals_for_strategy(db, strategy)
+        try:
+            signals = extract_signals_for_strategy(db, strategy)
+        except Exception as e:
+            logger.error(f"  ❌ Strategy failed: {e}")
+            # Rollback and reconnect on error
+            db.close()
+            db.connect()
+            continue
         
         if not signals:
             logger.warning(f"  No signals found, skipping")
