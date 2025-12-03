@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""
+Extract Top Multi-Pattern Signals for Optimization
+Step 1 of optimization pipeline
+
+Usage:
+    python3 extract_top_signals.py              # Default: append new signals only
+    python3 extract_top_signals.py --rebuild    # Clear and rebuild all signals
+    python3 extract_top_signals.py --append     # Append new signals (default)
+"""
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import pandas as pd
+import logging
+import argparse
+from datetime import datetime, timedelta
+from optimization.utils.db_helper import DatabaseHelper
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+def load_top_strategies():
+    """Load top multi-pattern strategies from CSV"""
+    df = pd.read_csv('multi_patterns_with_regime.csv')
+    
+    # Filter: WR >= 60%, signals >= 30
+    df_filtered = df[(df['total_signals'] >= 30) & (df['win_rate'] >= 60)]
+    
+    # Sort by win_rate
+    df_sorted = df_filtered.sort_values('win_rate', ascending=False)
+    
+    # Top-20
+    top20 = df_sorted.head(20)
+    
+    logger.info(f"Loaded {len(top20)} top strategies")
+    
+    return top20
+
+
+def extract_signals_for_strategy(db: DatabaseHelper, strategy):
+    """Extract actual signals for a strategy"""
+    
+    patterns_list = eval(strategy['patterns'])  # Convert string to list
+    signal_type = strategy['signal_type']
+    market_regime = strategy['market_regime']
+    
+    # Build pattern filter
+    pattern_conditions = []
+    for pattern in patterns_list:
+        parts = pattern.rsplit('_', 1)  # Split 'PATTERN_NAME_timeframe'
+        if len(parts) == 2:
+            pattern_type = parts[0]
+            timeframe = parts[1]
+            pattern_conditions.append(f"(sp.pattern_type = '{pattern_type}' AND sp.timeframe = '{timeframe}')")
+    
+    pattern_filter = ' OR '.join(pattern_conditions)
+    
+    # Query signals
+    query = f"""
+        WITH signal_patterns_agg AS (
+            SELECT 
+                sh.id as signal_id,
+                sh.pair_symbol,
+                sh.timestamp as signal_timestamp,
+                sh.total_score,
+                COUNT(DISTINCT sp.id) as pattern_count,
+                ARRAY_AGG(DISTINCT sp.pattern_type || '_' || sp.timeframe) as patterns
+            FROM fas_v2.scoring_history sh
+            JOIN fas_v2.sh_patterns shp ON shp.scoring_history_id = sh.id
+            JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
+            WHERE sh.timestamp >= NOW() - INTERVAL '30 days'
+                AND sh.timestamp < NOW() - INTERVAL '1 day'
+                AND ({pattern_filter})
+            GROUP BY sh.id, sh.pair_symbol, sh.timestamp, sh.total_score
+            HAVING COUNT(DISTINCT sp.id) >= {len(patterns_list)}
+        ),
+        with_results AS (
+            SELECT 
+                spa.*,
+                shr.signal_type,
+                mr.regime_type as market_regime
+            FROM signal_patterns_agg spa
+            LEFT JOIN web.scoring_history_results_v2 shr ON shr.scoring_history_id = spa.signal_id
+            LEFT JOIN fas_v2.market_regime mr ON (
+                mr.trading_pair_symbol = spa.pair_symbol
+                AND mr.timeframe = '15m'
+                AND mr.timestamp <= spa.signal_timestamp
+                AND mr.timestamp > spa.signal_timestamp - INTERVAL '1 hour'
+            )
+            WHERE shr.signal_type = '{signal_type}'
+                AND mr.regime_type = '{market_regime}'
+        )
+        SELECT * FROM with_results
+        LIMIT 100
+    """
+    
+    try:
+        results = db.execute_query(query)
+        logger.info(f"Found {len(results)} signals for {strategy['patterns'][:50]}...")
+        return results
+    except Exception as e:
+        logger.error(f"Error extracting signals: {e}")
+        return []
+
+
+def main():
+    # Parse arguments
+    parser = argparse.ArgumentParser(description='Extract top multi-pattern signals for optimization')
+    parser.add_argument('--rebuild', action='store_true', 
+                       help='Clear existing signals and rebuild from scratch')
+    parser.add_argument('--append', action='store_true', default=True,
+                       help='Append new signals only (default)')
+    args = parser.parse_args()
+    
+    # Determine mode
+    if args.rebuild:
+        mode = 'REBUILD'
+    else:
+        mode = 'APPEND'
+    
+    logger.info("=" * 100)
+    logger.info("SIGNAL EXTRACTION FOR OPTIMIZATION")
+    logger.info("=" * 100)
+    logger.info(f"Mode: {mode}")
+    logger.info("")
+    
+    # Load top strategies
+    logger.info("Step 1: Loading top-20 multi-pattern strategies...")
+    strategies = load_top_strategies()
+    
+    # Connect to database
+    logger.info("\nStep 2: Connecting to database...")
+    db = DatabaseHelper()
+    db.connect()  # Need write access
+    
+    # Handle rebuild mode
+    if mode == 'REBUILD':
+        logger.info("\n⚠️  REBUILD MODE: Clearing existing signals...")
+        deleted = db.execute_update("DELETE FROM optimization.selected_signals")
+        logger.info(f"✅ Deleted {deleted} existing signals")
+    
+    # Check existing signals
+    existing_query = "SELECT COUNT(*) as count FROM optimization.selected_signals"
+    existing_count = db.execute_query(existing_query)[0]['count']
+    logger.info(f"\nExisting signals in DB: {existing_count}")
+    
+    # Extract and insert signals
+    logger.info("\nStep 3: Extracting signals for each strategy...")
+    
+    total_inserted = 0
+    total_skipped = 0
+    
+    for idx, (i, strategy) in enumerate(strategies.iterrows(), 1):
+        strategy_name = f"{strategy['patterns'][:80]}|{strategy['market_regime']}|{strategy['signal_type']}"
+        
+        logger.info(f"\n[{idx}/20] {strategy_name[:100]}...")
+        
+        signals = extract_signals_for_strategy(db, strategy)
+        
+        if not signals:
+            logger.warning(f"  No signals found, skipping")
+            continue
+        
+        # Prepare for insertion
+        insert_data = []
+        skipped = 0
+        
+        for sig in signals:
+            # Check if signal already exists (in append mode)
+            if mode == 'APPEND':
+                check_query = "SELECT 1 FROM optimization.selected_signals WHERE signal_id = %s"
+                exists = db.execute_query(check_query, (sig['signal_id'],))
+                if exists:
+                    skipped += 1
+                    continue
+            
+            entry_time = sig['signal_timestamp'] + timedelta(minutes=17)
+            
+            insert_data.append((
+                sig['signal_id'],
+                sig['pair_symbol'],
+                sig['signal_timestamp'],
+                entry_time,
+                sig['signal_type'],
+                sig['patterns'],
+                sig['market_regime'],
+                float(sig['total_score']) if sig['total_score'] else None,
+                strategy_name
+            ))
+        
+        # Bulk insert
+        if insert_data:
+            try:
+                count = db.bulk_insert(
+                    'optimization.selected_signals',
+                    ['signal_id', 'pair_symbol', 'signal_timestamp', 'entry_time', 
+                     'signal_type', 'patterns', 'market_regime', 'total_score', 'strategy_name'],
+                    insert_data
+                )
+                total_inserted += count
+                logger.info(f"  ✅ Inserted {count} new signals")
+            except Exception as e:
+                logger.error(f"  ❌ Error inserting: {e}")
+                continue
+        
+        if skipped > 0:
+            logger.info(f"  ⏭️  Skipped {skipped} existing signals")
+            total_skipped += skipped
+    
+    # Final verification
+    logger.info("\n" + "=" * 100)
+    logger.info("VERIFICATION:")
+    logger.info("=" * 100)
+    
+    final_count_query = "SELECT COUNT(*) as count FROM optimization.selected_signals"
+    final_count = db.execute_query(final_count_query)[0]['count']
+    
+    logger.info(f"Signals before: {existing_count}")
+    logger.info(f"New signals inserted: {total_inserted}")
+    logger.info(f"Signals skipped: {total_skipped}")
+    logger.info(f"Signals after: {final_count}")
+    
+    # Detailed stats
+    stats_query = """
+        SELECT 
+            signal_type,
+            COUNT(*) as count,
+            COUNT(DISTINCT pair_symbol) as unique_pairs
+        FROM optimization.selected_signals
+        GROUP BY signal_type
+        ORDER BY signal_type
+    """
+    stats = db.execute_query(stats_query)
+    
+    logger.info("\nBreakdown by signal type:")
+    for row in stats:
+        logger.info(f"  {row['signal_type']:5}: {row['count']:4} signals, {row['unique_pairs']:3} unique pairs")
+    
+    logger.info("\n" + "=" * 100)
+    logger.info(f"✅ COMPLETE: {final_count} total signals in database")
+    logger.info("=" * 100)
+    
+    db.close()
+
+
+if __name__ == "__main__":
+    main()
