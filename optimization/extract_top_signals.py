@@ -256,13 +256,18 @@ def main():
         for sig in signals:
             entry_time = sig['signal_timestamp'] + timedelta(minutes=17)
             
+            # patterns is PostgreSQL array from query result
+            # psycopg will automatically convert Python list to PostgreSQL array
+            # Don't convert to string! Just pass the list as-is
+            patterns_array = sig['patterns']  # Keep as list
+            
             insert_data.append((
                 sig['signal_id'],
                 sig['pair_symbol'],
                 sig['signal_timestamp'],
                 entry_time,
                 strategy['signal_type'],  # From strategy
-                str(sig['patterns']),  # Convert array to string
+                patterns_array,  # Pass list directly - psycopg handles TEXT[] conversion
                 sig.get('market_regime', strategy['market_regime']),  # Use from result or strategy
                 float(sig['total_score']) if sig['total_score'] else None,
                 strategy_name
