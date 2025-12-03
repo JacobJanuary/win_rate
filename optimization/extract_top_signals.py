@@ -252,17 +252,8 @@ def main():
         
         # Prepare for insertion
         insert_data = []
-        skipped = 0
         
         for sig in signals:
-            # Check if signal already exists (in append mode)
-            if mode == 'APPEND':
-                check_query = "SELECT 1 FROM optimization.selected_signals WHERE signal_id = %s"
-                exists = db.execute_query(check_query, (sig['signal_id'],))
-                if exists:
-                    skipped += 1
-                    continue
-            
             entry_time = sig['signal_timestamp'] + timedelta(minutes=17)
             
             insert_data.append((
@@ -270,31 +261,31 @@ def main():
                 sig['pair_symbol'],
                 sig['signal_timestamp'],
                 entry_time,
-                sig['signal_type'],
-                sig['patterns'],
-                sig['market_regime'],
+                strategy['signal_type'],  # From strategy
+                str(sig['patterns']),  # Convert array to string
+                sig.get('market_regime', strategy['market_regime']),  # Use from result or strategy
                 float(sig['total_score']) if sig['total_score'] else None,
                 strategy_name
             ))
         
-        # Bulk insert
+        # Bulk insert with conflict handling
         if insert_data:
             try:
-                count = db.bulk_insert(
+                inserted = db.bulk_insert(
                     'optimization.selected_signals',
                     ['signal_id', 'pair_symbol', 'signal_timestamp', 'entry_time', 
                      'signal_type', 'patterns', 'market_regime', 'total_score', 'strategy_name'],
                     insert_data
                 )
-                total_inserted += count
-                logger.info(f"  ✅ Inserted {count} new signals")
+                total_inserted += inserted
+                conflicts = len(insert_data) - inserted
+                logger.info(f"  ✅ Inserted {inserted} signals")
+                if conflicts > 0:
+                    logger.info(f"  ⏭️  Skipped {conflicts} duplicates (already in other strategies)")
             except Exception as e:
                 logger.error(f"  ❌ Error inserting: {e}")
+                db.conn.rollback()
                 continue
-        
-        if skipped > 0:
-            logger.info(f"  ⏭️  Skipped {skipped} existing signals")
-            total_skipped += skipped
     
     # Final verification
     logger.info("\n" + "=" * 100)

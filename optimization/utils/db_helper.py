@@ -94,26 +94,41 @@ class DatabaseHelper:
     
     def bulk_insert(self, table: str, columns: List[str], data: List[tuple], batch_size: int = 1000):
         """Bulk insert data with batching to prevent overload"""
+    def bulk_insert(self, table, columns, data, batch_size=1000):
+        """
+        Bulk insert with batching and conflict handling
+        
+        Args:
+            table: Table name (schema.table)
+            columns: List of column names
+            data: List of tuples with values
+            batch_size: Rows per batch
+            
+        Returns:
+            Total rows inserted (excluding conflicts)
+        """
         if not data:
             return 0
         
-        total_inserted = 0
+        placeholders = ', '.join(['%s'] * len(columns))
+        columns_str = ', '.join(columns)
         
-        # Process in batches
-        for i in range(0, len(data), batch_size):
-            batch = data[i:i+batch_size]
-            
-            placeholders = ','.join(['%s'] * len(columns))
-            cols = ','.join(columns)
-            query = f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
-            
-            with self.conn.cursor() as cur:
+        # Add ON CONFLICT DO NOTHING to handle duplicates gracefully
+        query = f"""
+            INSERT INTO {table} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT (signal_id) DO NOTHING
+        """
+        
+        total = 0
+        with self.conn.cursor() as cur:
+            for i in range(0, len(data), batch_size):
+                batch = data[i:i + batch_size]
                 cur.executemany(query, batch)
-                self.conn.commit()
-                total_inserted += cur.rowcount
+                total += cur.rowcount
+            self.conn.commit()
         
-        logger.debug(f"Bulk inserted {total_inserted} rows into {table} (batches of {batch_size})")
-        return total_inserted
+        return total
     
     def __enter__(self):
         """Context manager entry"""
