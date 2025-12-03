@@ -116,7 +116,8 @@ def load_top_strategies(db: DatabaseHelper):
 def extract_signals_for_strategy(db: DatabaseHelper, strategy):
     """Extract actual signals for a strategy"""
     
-    patterns_list = eval(strategy['patterns'])  # Convert string to list
+    # patterns is already a list from hardcoded data
+    patterns_list = strategy['patterns']
     signal_type = strategy['signal_type']
     market_regime = strategy['market_regime']
     
