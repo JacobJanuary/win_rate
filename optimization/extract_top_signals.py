@@ -133,8 +133,8 @@ def extract_signals_for_strategy(db: DatabaseHelper, strategy):
     pattern_filter = ' OR '.join(pattern_conditions)
     
     # Query signals with CORRECT market_regime join
-    # market_regime is GLOBAL (BTC market state), not per-pair
-    # Column is 'regime' not 'regime_type'
+    # NO LIMIT - get ALL matching signals
+    # 60 days period (like in original research)
     query = f"""
         WITH signal_patterns_agg AS (
             SELECT 
@@ -147,7 +147,7 @@ def extract_signals_for_strategy(db: DatabaseHelper, strategy):
             FROM fas_v2.scoring_history sh
             JOIN fas_v2.sh_patterns shp ON shp.scoring_history_id = sh.id
             JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
-            WHERE sh.timestamp >= NOW() - INTERVAL '30 days'
+            WHERE sh.timestamp >= NOW() - INTERVAL '60 days'
                 AND sh.timestamp < NOW() - INTERVAL '1 day'
                 AND ({pattern_filter})
             GROUP BY sh.id, sh.pair_symbol, sh.timestamp, sh.total_score
@@ -170,7 +170,6 @@ def extract_signals_for_strategy(db: DatabaseHelper, strategy):
         )
         SELECT * FROM with_results
         WHERE market_regime IS NOT NULL
-        LIMIT 100
     """
     
     try:
