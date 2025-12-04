@@ -93,22 +93,21 @@ def save_best_parameters(db: DatabaseHelper, aggregated_results):
             result['profit_factor']
         ))
     
-    # Clear existing data
-    db.execute_update("DELETE FROM optimization.best_parameters")
-    
-    # Insert new results
-    count = db.bulk_insert(
-        'optimization.best_parameters',
-        ['strategy_name', 'signal_type', 'market_regime', 'sl_pct', 
-         'ts_activation_pct', 'ts_callback_pct', 'total_signals',
-         'winning_trades', 'losing_trades', 'win_rate', 'avg_pnl_pct',
-         'total_pnl_pct', 'max_drawdown_pct', 'profit_factor'],
-        insert_data
-    )
-    
-    logger.info(f"✅ Inserted {count} parameter combinations")
-
-
+    # Bulk insert
+    logger.info("Inserting best parameters into database...")
+    try:
+        count = db.bulk_insert_best_params(
+            'optimization.best_parameters',
+            ['strategy_name', 'signal_type', 'market_regime', 'sl_pct', 'ts_activation_pct', 
+             'ts_callback_pct', 'total_signals', 'winning_trades', 'losing_trades', 
+             'win_rate', 'avg_pnl_pct', 'total_pnl_pct', 'max_drawdown_pct', 
+             'profit_factor'],
+            insert_data
+        )
+        logger.info(f"✅ Inserted/Updated {count} parameter combinations")
+    except Exception as e:
+        logger.error(f"Error inserting best parameters: {e}")
+        
 def main():
     logger.info("=" * 100)
     logger.info("RESULTS AGGREGATION")

@@ -186,6 +186,46 @@ class DatabaseHelper:
         
         return total
     
+    def bulk_insert_best_params(self, table, columns, data, batch_size=1000):
+        """
+        Bulk insert best parameters with correct UNIQUE constraint
+        
+        Best params table has UNIQUE(strategy_name, signal_type, market_regime, sl_pct, ts_activation_pct, ts_callback_pct)
+        """
+        if not data:
+            return 0
+        
+        placeholders = ', '.join(['%s'] * len(columns))
+        columns_str = ', '.join(columns)
+        
+        # Correct ON CONFLICT for best_parameters table
+        query = f"""
+            INSERT INTO {table} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT (strategy_name, signal_type, market_regime, sl_pct, ts_activation_pct, ts_callback_pct) 
+            DO UPDATE SET
+                total_signals = EXCLUDED.total_signals,
+                winning_trades = EXCLUDED.winning_trades,
+                losing_trades = EXCLUDED.losing_trades,
+                win_rate = EXCLUDED.win_rate,
+                avg_pnl_pct = EXCLUDED.avg_pnl_pct,
+                total_pnl_pct = EXCLUDED.total_pnl_pct,
+                max_drawdown_pct = EXCLUDED.max_drawdown_pct,
+                profit_factor = EXCLUDED.profit_factor,
+                sharpe_ratio = EXCLUDED.sharpe_ratio,
+                updated_at = NOW()
+        """
+        
+        total = 0
+        with self.conn.cursor() as cur:
+            for i in range(0, len(data), batch_size):
+                batch = data[i:i + batch_size]
+                cur.executemany(query, batch)
+                total += cur.rowcount
+            self.conn.commit()
+        
+        return total
+    
     def __enter__(self):
         """Context manager entry"""
         self.connect()
