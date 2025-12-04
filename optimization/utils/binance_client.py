@@ -98,7 +98,7 @@ class BinanceClient:
             raise
     
     def _check_rate_limit(self):
-        """Check and enforce rate limits (20% of max bandwidth)"""
+        """Check and enforce rate limits (200 req/min)"""
         current_time = time.time()
         time_since_minute_start = current_time - self.last_minute_start
         
@@ -109,7 +109,7 @@ class BinanceClient:
             logger.debug(f"Rate limit counter reset")
         
         # If approaching limit, wait
-        if self.request_count >= self.rate_limit:
+        if self.request_count >= self.requests_per_minute:
             wait_time = 60 - time_since_minute_start + 1  # Wait until next minute
             logger.info(f"Rate limit reached ({self.request_count} reqs), waiting {wait_time:.1f}s...")
             time.sleep(wait_time)
