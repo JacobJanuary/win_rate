@@ -227,9 +227,9 @@ def simulate_capital_flow(df, position_size=100):
         Dict with daily balance, capital requirements, final balance
     """
     
-    # Convert timestamps to datetime
-    df['entry_dt'] = pd.to_datetime(df['entry_time'])
-    df['exit_dt'] = pd.to_datetime(df['exit_time'], unit='ms')
+    # Convert timestamps to datetime (tz-naive for comparison)
+    df['entry_dt'] = pd.to_datetime(df['entry_time']).dt.tz_localize(None)
+    df['exit_dt'] = pd.to_datetime(df['exit_time'], unit='ms').dt.tz_localize(None)
     
     # Create events list (open/close)
     events = []
