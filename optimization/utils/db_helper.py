@@ -157,6 +157,35 @@ class DatabaseHelper:
         
         return total
     
+    def bulk_insert_simulations(self, table, columns, data, batch_size=1000):
+        """
+        Bulk insert simulation results with correct UNIQUE constraint
+        
+        Simulation table has UNIQUE(signal_id, sl_pct, ts_activation_pct, ts_callback_pct)
+        """
+        if not data:
+            return 0
+        
+        placeholders = ', '.join(['%s'] * len(columns))
+        columns_str = ', '.join(columns)
+        
+        # Correct ON CONFLICT for simulation_results table
+        query = f"""
+            INSERT INTO {table} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT (signal_id, sl_pct, ts_activation_pct, ts_callback_pct) DO NOTHING
+        """
+        
+        total = 0
+        with self.conn.cursor() as cur:
+            for i in range(0, len(data), batch_size):
+                batch = data[i:i + batch_size]
+                cur.executemany(query, batch)
+                total += cur.rowcount
+            self.conn.commit()
+        
+        return total
+    
     def __enter__(self):
         """Context manager entry"""
         self.connect()

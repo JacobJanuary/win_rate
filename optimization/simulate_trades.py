@@ -126,17 +126,24 @@ def simulate_signal(args):
         ))
     
     try:
-        # Use smaller batch size (100) to reduce DB load per transaction
-        db.bulk_insert(
-            'optimization.simulation_results',
-            ['signal_id', 'sl_pct', 'ts_activation_pct', 'ts_callback_pct',
-             'exit_type', 'exit_price', 'exit_time', 'pnl_pct',
-             'max_profit_pct', 'max_drawdown_pct', 'hold_duration_minutes'],
-            insert_data,
-            batch_size=100  # Insert in chunks of 100 to reduce transaction size
-        )
+        # Bulk insert all simulations for this signal
+        if insert_data:
+            try:
+                db.bulk_insert_simulations(
+                    'optimization.simulation_results',
+                    ['signal_id', 'sl_pct', 'ts_activation_pct', 'ts_callback_pct',
+                     'exit_type', 'exit_price', 'exit_time', 'pnl_pct',
+                     'max_profit_pct', 'max_drawdown_pct', 'hold_duration_minutes'],
+                    insert_data
+                )
+            except Exception as e:
+                logger.error(f"Error inserting results for signal {signal['signal_id']}: {e}")
+                db.close()
+                # Re-establish connection for subsequent operations if needed, though this worker is about to finish
+                db.connect() 
+                return 0 # Indicate failure for this signal
     except Exception as e:
-        logger.error(f"Error inserting results for signal {signal['signal_id']}: {e}")
+        logger.error(f"Error preparing or inserting results for signal {signal['signal_id']}: {e}")
         db.close()
         return 0
     
