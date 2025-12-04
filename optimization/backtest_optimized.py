@@ -215,18 +215,161 @@ def save_results(df, min_pnl_threshold):
     logger.info(f"✅ Saved backtest results to {output_file}")
 
 
+def simulate_capital_flow(df, position_size=100):
+    """
+    Simulate capital flow with frozen/free balance
+    
+    Args:
+        df: DataFrame with trade results
+        position_size: Size of each position in USD
+    
+    Returns:
+        Dict with daily balance, capital requirements, final balance
+    """
+    
+    # Convert timestamps to datetime
+    df['entry_dt'] = pd.to_datetime(df['entry_time'])
+    df['exit_dt'] = pd.to_datetime(df['exit_time'], unit='ms')
+    
+    # Create events list (open/close)
+    events = []
+    
+    for idx, row in df.iterrows():
+        # Entry event
+        events.append({
+            'timestamp': row['entry_dt'],
+            'type': 'OPEN',
+            'signal_id': row['signal_id'],
+            'pair': row['pair_symbol'],
+            'amount': -position_size  # Freeze capital
+        })
+        
+        # Exit event
+        pnl = position_size * (row['pnl_pct'] / 100)
+        events.append({
+            'timestamp': row['exit_dt'],
+            'type': 'CLOSE',
+            'signal_id': row['signal_id'],
+            'pair': row['pair_symbol'],
+            'amount': position_size + pnl,  # Return capital + PnL
+            'pnl': pnl,
+            'exit_type': row['exit_type']
+        })
+    
+    # Sort events by timestamp
+    events_df = pd.DataFrame(events).sort_values('timestamp')
+    
+    # Simulate balance flow
+    balance = 0
+    frozen = 0
+    min_balance = 0
+    
+    daily_stats = []
+    current_date = None
+    daily_trades_open = 0
+    daily_trades_closed = 0
+    
+    for idx, event in events_df.iterrows():
+        event_date = event['timestamp'].date()
+        
+        # New day - save previous day stats
+        if current_date and event_date != current_date:
+            daily_stats.append({
+                'date': current_date,
+                'trades_opened': daily_trades_open,
+                'trades_closed': daily_trades_closed,
+                'frozen': frozen,
+                'free_balance': balance,
+                'total_balance': balance + frozen
+            })
+            daily_trades_open = 0
+            daily_trades_closed = 0
+        
+        current_date = event_date
+        
+        if event['type'] == 'OPEN':
+            balance += event['amount']  # -100
+            frozen -= event['amount']    # +100
+            daily_trades_open += 1
+        else:  # CLOSE
+            balance += event['amount']   # +100 + PnL
+            frozen -= position_size       # -100
+            daily_trades_closed += 1
+        
+        # Track minimum balance (capital requirement)
+        min_balance = min(min_balance, balance)
+    
+    # Last day stats
+    if current_date:
+        daily_stats.append({
+            'date': current_date,
+            'trades_opened': daily_trades_open,
+            'trades_closed': daily_trades_closed,
+            'frozen': frozen,
+            'free_balance': balance,
+            'total_balance': balance + frozen
+        })
+    
+    return {
+        'daily_stats': pd.DataFrame(daily_stats),
+        'capital_required': abs(min_balance),
+        'final_balance': balance,
+        'final_frozen': frozen,
+        'total_final': balance + frozen
+    }
+
+
+def print_capital_report(capital_sim, position_size):
+    """Print capital simulation report"""
+    
+    print("\n" + "=" * 120)
+    print("CAPITAL FLOW ANALYSIS")
+    print("=" * 120)
+    
+    print(f"\n💵 POSITION SIZE: ${position_size} per trade")
+    
+    print(f"\n📊 DAILY BALANCE REPORT:")
+    print("-" * 120)
+    print(f"{'Date':<12} {'Opened':<8} {'Closed':<8} {'Frozen $':<12} {'Free $':<12} {'Total $':<12}")
+    print("-" * 120)
+    
+    for idx, row in capital_sim['daily_stats'].iterrows():
+        print(f"{str(row['date']):<12} {row['trades_opened']:<8} {row['trades_closed']:<8} "
+              f"{row['frozen']:>10.2f} {row['free_balance']:>10.2f} {row['total_balance']:>10.2f}")
+    
+    print("-" * 120)
+    
+    print(f"\n💰 CAPITAL REQUIREMENTS:")
+    print(f"   Required Capital (Max Drawdown): ${capital_sim['capital_required']:,.2f}")
+    print(f"   Recommended Capital (with buffer): ${capital_sim['capital_required'] * 1.2:,.2f}")
+    
+    print(f"\n📈 FINAL RESULTS:")
+    print(f"   Free Balance: ${capital_sim['final_balance']:,.2f}")
+    print(f"   Frozen in Open Positions: ${capital_sim['final_frozen']:,.2f}")
+    print(f"   Total Balance: ${capital_sim['total_final']:,.2f}")
+    
+    if capital_sim['capital_required'] > 0:
+        roi = (capital_sim['total_final'] / capital_sim['capital_required'] - 1) * 100
+        print(f"   ROI (on required capital): {roi:,.2f}%")
+    
+    print("=" * 120)
+
+
 def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Backtest with optimized parameters')
     parser.add_argument('--min-pnl', type=float, default=180,
                        help='Minimum strategy total_pnl_pct threshold (default: 180)')
+    parser.add_argument('--position-size', type=float, default=100,
+                       help='Position size in USD (default: 100)')
     args = parser.parse_args()
     
     logger.info("=" * 120)
     logger.info("BACKTEST WITH OPTIMIZED PARAMETERS")
     logger.info("=" * 120)
-    logger.info(f"Strategy filter: total_pnl > {args.min_pnl}%\n")
+    logger.info(f"Strategy filter: total_pnl > {args.min_pnl}%")
+    logger.info(f"Position size: ${args.position_size}\n")
     
     # Connect to database
     logger.info("Connecting to database...")
@@ -251,8 +394,18 @@ def main():
     # Print report
     print_backtest_report(metrics, args.min_pnl)
     
+    # Capital flow simulation
+    logger.info("\nSimulating capital flow...")
+    capital_sim = simulate_capital_flow(metrics['df'], args.position_size)
+    print_capital_report(capital_sim, args.position_size)
+    
     # Save results
     save_results(metrics['df'], args.min_pnl)
+    
+    # Save daily balance
+    daily_file = f'results/daily_balance_pnl{int(args.min_pnl)}.csv'
+    capital_sim['daily_stats'].to_csv(daily_file, index=False)
+    logger.info(f"✅ Saved daily balance to {daily_file}")
     
     db.close()
     logger.info("\n✅ Backtest complete!")
