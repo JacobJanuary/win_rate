@@ -5,7 +5,7 @@
 set -e  # Exit on any error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."  # Go to project root
 
 echo "========================================================================================================"
 echo "MONTHLY OPTIMIZATION - FULL PIPELINE"
