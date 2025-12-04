@@ -46,20 +46,25 @@ def get_parameter_combinations(config):
     return combos
 
 
-def load_signals(db: DatabaseHelper):
-    """Load all selected signals"""
+def load_signals_to_simulate(db: DatabaseHelper):
+    """Load signals that need simulation (incremental - skips already simulated)"""
+    
     query = """
         SELECT 
-            id,
-            signal_id,
-            pair_symbol,
-            entry_time,
-            signal_type,
-            patterns,
-            market_regime,
-            strategy_name
-        FROM optimization.selected_signals
-        ORDER BY id
+            ss.signal_id,
+            ss.pair_symbol,
+            ss.entry_time,
+            ss.signal_type
+        FROM optimization.selected_signals ss
+        WHERE NOT EXISTS (
+            -- Skip signals that already have ALL parameter combinations simulated
+            SELECT 1
+            FROM optimization.simulation_results sr
+            WHERE sr.signal_id = ss.signal_id
+            LIMIT 1
+        )
+        ORDER BY ss.entry_time
+        LIMIT 5000  -- Process in batches
     """
     
     return db.execute_query(query)
@@ -170,9 +175,9 @@ def main():
     db = DatabaseHelper()
     db.connect()
     
-    # Load signals
-    logger.info("\nStep 3: Loading signals...")
-    signals = load_signals(db)
+    # Load signals (incremental - skips already simulated)
+    logger.info("Loading signals to simulate...")
+    signals = load_signals_to_simulate(db)
     logger.info(f"Found {len(signals)} signals to simulate")
     
     # Calculate total simulations
