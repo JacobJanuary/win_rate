@@ -132,6 +132,13 @@ def main():
     # Convert to DataFrame
     df = pd.DataFrame(results)
     
+    # Convert Decimal types to float for pandas operations
+    numeric_cols = ['sl_pct', 'ts_activation_pct', 'ts_callback_pct', 'win_rate', 
+                   'avg_pnl_pct', 'total_pnl_pct', 'max_drawdown_pct', 'profit_factor']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
     # Save to CSV
     output_file = 'results/aggregated_results.csv'
     os.makedirs('results', exist_ok=True)
