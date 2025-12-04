@@ -126,18 +126,22 @@ def main():
                 candle.get('trades_count')
             ))
         
-        # Bulk insert
-        try:
-            count = db.bulk_insert(
-                'optimization.candles_1m',
-                ['pair_symbol', 'open_time', 'open_price', 'high_price', 'low_price',
-                 'close_price', 'volume', 'close_time', 'quote_volume', 'trades_count'],
-                insert_data
-            )
-            total_candles += count
-        except Exception as e:
-            logger.error(f"Error inserting candles for {signal['pair_symbol']}: {e}")
-            failed_signals.append(signal)
+        # Insert candles
+        if insert_data:
+            try:
+                # Use specialized method for candles (different UNIQUE constraint)
+                inserted = db.bulk_insert_candles(
+                    'optimization.candles_1m',
+                    ['pair_symbol', 'open_time', 'open_price', 'high_price', 'low_price', 
+                     'close_price', 'volume', 'close_time', 'quote_volume', 'trades_count'],
+                    insert_data
+                )
+                total_candles += inserted
+            except Exception as e:
+                logger.error(f"Error inserting candles for {signal['pair_symbol']}: {e}")
+                if db.conn:
+                    db.conn.rollback()
+                failed_signals.append(signal)
     
     logger.info("\n" + "=" * 100)
     logger.info("SUMMARY:")

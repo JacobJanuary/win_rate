@@ -12,18 +12,25 @@ logger = logging.getLogger(__name__)
 
 
 class BinanceClient:
-    """Binance Futures Public API client (no auth required)"""
+    """Binance Public API client with rate limiting"""
     
     def __init__(self, config_path='config/optimization_config.yaml'):
-        """Initialize Binance client"""
+        """Initialize with config"""
         with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
+            self.config = yaml.safe_load(f)
         
-        binance_config = config['binance']
+        self.base_url = self.config['binance']['base_url']
         
-        self.base_url = binance_config['base_url']
-        self.rate_limit = binance_config['requests_per_minute']
-        self.request_delay = binance_config['request_delay_ms'] / 1000  # Convert to seconds
+        # Rate limiting: 200 requests/minute (safe limit)
+        self.requests_per_minute = 200
+        self.request_delay = 60.0 / self.requests_per_minute  # 0.3 seconds between requests
+        
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Content-Type': 'application/json'
+        })
+        
+        logger.info(f"Binance client initialized: {self.requests_per_minute} req/min")
         
         self.request_count = 0
         self.last_request_time = time.time()

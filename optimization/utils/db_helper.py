@@ -92,8 +92,6 @@ class DatabaseHelper:
             self.conn.commit()
             return cur.rowcount
     
-    def bulk_insert(self, table: str, columns: List[str], data: List[tuple], batch_size: int = 1000):
-        """Bulk insert data with batching to prevent overload"""
     def bulk_insert(self, table, columns, data, batch_size=1000):
         """
         Bulk insert with batching and conflict handling
@@ -118,6 +116,35 @@ class DatabaseHelper:
             INSERT INTO {table} ({columns_str})
             VALUES ({placeholders})
             ON CONFLICT (signal_id) DO NOTHING
+        """
+        
+        total = 0
+        with self.conn.cursor() as cur:
+            for i in range(0, len(data), batch_size):
+                batch = data[i:i + batch_size]
+                cur.executemany(query, batch)
+                total += cur.rowcount
+            self.conn.commit()
+        
+        return total
+    
+    def bulk_insert_candles(self, table, columns, data, batch_size=1000):
+        """
+        Bulk insert candles with correct UNIQUE constraint
+        
+        Candles table has UNIQUE(pair_symbol, open_time), not signal_id
+        """
+        if not data:
+            return 0
+        
+        placeholders = ', '.join(['%s'] * len(columns))
+        columns_str = ', '.join(columns)
+        
+        # Correct ON CONFLICT for candles table
+        query = f"""
+            INSERT INTO {table} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT (pair_symbol, open_time) DO NOTHING
         """
         
         total = 0
