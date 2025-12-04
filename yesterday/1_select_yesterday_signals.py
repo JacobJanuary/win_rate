@@ -36,6 +36,7 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
     query = f"""
         WITH best_strategies AS (
             -- Get top strategies with total_pnl > threshold
+            -- Extract patterns from strategy_name
             SELECT DISTINCT ON (strategy_name, signal_type, market_regime)
                 strategy_name,
                 signal_type,
@@ -43,7 +44,17 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
                 sl_pct,
                 ts_activation_pct,
                 ts_callback_pct,
-                total_pnl_pct
+                total_pnl_pct,
+                -- Extract patterns array from strategy_name format: "['PAT1', 'PAT2']|TYPE|REGIME"
+                string_to_array(
+                    regexp_replace(
+                        split_part(strategy_name, '|', 1),  -- Get ['PAT1', 'PAT2'] part
+                        '[\[\]'']',  -- Remove brackets and quotes
+                        '',
+                        'g'
+                    ),
+                    ', '  -- Split by comma-space
+                ) as required_patterns
             FROM optimization.best_parameters
             WHERE total_pnl_pct > {min_total_pnl}
             ORDER BY
@@ -105,6 +116,7 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
         JOIN best_strategies bs ON (
             bs.signal_type = yw.signal_type
             AND bs.market_regime = yw.market_regime
+            AND yw.patterns @> bs.required_patterns  -- EXACT pattern match
         )
         WHERE yw.market_regime IS NOT NULL
         ORDER BY yw.signal_timestamp
