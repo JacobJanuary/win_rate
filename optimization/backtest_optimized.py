@@ -349,8 +349,13 @@ def print_capital_report(capital_sim, position_size):
     print(f"   Total Balance: ${capital_sim['total_final']:,.2f}")
     
     if capital_sim['capital_required'] > 0:
-        roi = (capital_sim['total_final'] / capital_sim['capital_required'] - 1) * 100
-        print(f"   ROI (on required capital): {roi:,.2f}%")
+        # ROI = profit / required capital (no -1 needed since balance starts at 0)
+        roi = (capital_sim['total_final'] / capital_sim['capital_required']) * 100
+        print(f"   ROI (on required capital): {roi:,.2f}% per month")
+        print(f"\n💡 INTERPRETATION:")
+        print(f"   Starting capital needed: ${capital_sim['capital_required']:,.2f}")
+        print(f"   Profit after {len(capital_sim['daily_stats'])} days: ${capital_sim['total_final']:,.2f}")
+        print(f"   Monthly return: {roi:.2f}%")
     
     print("=" * 120)
 
