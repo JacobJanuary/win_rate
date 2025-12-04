@@ -71,7 +71,7 @@ def calculate_capital_flow(df, position_size=100, leverage=10):
         })
         
         # Exit
-        pnl = position_size * (row['pnl_pct'] / 100)
+        pnl = position_size * (float(row['pnl_pct']) / 100)
         events.append({
             'timestamp': row['exit_dt'],
             'type': 'CLOSE',
