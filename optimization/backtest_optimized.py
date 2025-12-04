@@ -215,17 +215,21 @@ def save_results(df, min_pnl_threshold):
     logger.info(f"✅ Saved backtest results to {output_file}")
 
 
-def simulate_capital_flow(df, position_size=100):
+def simulate_capital_flow(df, position_size=100, leverage=10):
     """
-    Simulate capital flow with frozen/free balance
+    Simulate capital flow with frozen/free balance and leverage
     
     Args:
         df: DataFrame with trade results
-        position_size: Size of each position in USD
+        position_size: Size of each position in USD (notional value)
+        leverage: Leverage multiplier (default: 10x)
     
     Returns:
         Dict with daily balance, capital requirements, final balance
     """
+    
+    # Calculate margin required per position
+    margin_per_position = position_size / leverage
     
     # Convert timestamps to datetime (tz-naive for comparison)
     df['entry_dt'] = pd.to_datetime(df['entry_time']).dt.tz_localize(None)
@@ -235,23 +239,23 @@ def simulate_capital_flow(df, position_size=100):
     events = []
     
     for idx, row in df.iterrows():
-        # Entry event
+        # Entry event - freeze only margin
         events.append({
             'timestamp': row['entry_dt'],
             'type': 'OPEN',
             'signal_id': row['signal_id'],
             'pair': row['pair_symbol'],
-            'amount': -position_size  # Freeze capital
+            'amount': -margin_per_position  # Freeze margin only
         })
         
-        # Exit event
+        # Exit event - return margin + PnL (calculated on full position size)
         pnl = position_size * (row['pnl_pct'] / 100)
         events.append({
             'timestamp': row['exit_dt'],
             'type': 'CLOSE',
             'signal_id': row['signal_id'],
             'pair': row['pair_symbol'],
-            'amount': position_size + pnl,  # Return capital + PnL
+            'amount': margin_per_position + pnl,  # Return margin + PnL
             'pnl': pnl,
             'exit_type': row['exit_type']
         })
@@ -288,12 +292,12 @@ def simulate_capital_flow(df, position_size=100):
         current_date = event_date
         
         if event['type'] == 'OPEN':
-            balance += event['amount']  # -100
-            frozen -= event['amount']    # +100
+            balance += event['amount']  # -margin
+            frozen -= event['amount']    # +margin
             daily_trades_open += 1
         else:  # CLOSE
-            balance += event['amount']   # +100 + PnL
-            frozen -= position_size       # -100
+            balance += event['amount']   # +margin + PnL
+            frozen -= margin_per_position  # -margin
             daily_trades_closed += 1
         
         # Track minimum balance (capital requirement)
@@ -319,14 +323,19 @@ def simulate_capital_flow(df, position_size=100):
     }
 
 
-def print_capital_report(capital_sim, position_size):
+def print_capital_report(capital_sim, position_size, leverage):
     """Print capital simulation report"""
     
     print("\n" + "=" * 120)
     print("CAPITAL FLOW ANALYSIS")
     print("=" * 120)
     
-    print(f"\n💵 POSITION SIZE: ${position_size} per trade")
+    margin_per_position = position_size / leverage
+    
+    print(f"\n💵 TRADING PARAMETERS:")
+    print(f"   Position Size (Notional): ${position_size} per trade")
+    print(f"   Leverage: {leverage}x")
+    print(f"   Margin Required: ${margin_per_position:.2f} per trade ({100/leverage:.1f}% of position)")
     
     print(f"\n📊 DAILY BALANCE REPORT:")
     print("-" * 120)
@@ -368,13 +377,16 @@ def main():
                        help='Minimum strategy total_pnl_pct threshold (default: 180)')
     parser.add_argument('--position-size', type=float, default=100,
                        help='Position size in USD (default: 100)')
+    parser.add_argument('--leverage', type=float, default=10,
+                       help='Leverage multiplier (default: 10x)')
     args = parser.parse_args()
     
     logger.info("=" * 120)
     logger.info("BACKTEST WITH OPTIMIZED PARAMETERS")
     logger.info("=" * 120)
     logger.info(f"Strategy filter: total_pnl > {args.min_pnl}%")
-    logger.info(f"Position size: ${args.position_size}\n")
+    logger.info(f"Position size: ${args.position_size}")
+    logger.info(f"Leverage: {args.leverage}x\n")
     
     # Connect to database
     logger.info("Connecting to database...")
@@ -401,8 +413,8 @@ def main():
     
     # Capital flow simulation
     logger.info("\nSimulating capital flow...")
-    capital_sim = simulate_capital_flow(metrics['df'], args.position_size)
-    print_capital_report(capital_sim, args.position_size)
+    capital_sim = simulate_capital_flow(metrics['df'], args.position_size, args.leverage)
+    print_capital_report(capital_sim, args.position_size, args.leverage)
     
     # Save results
     save_results(metrics['df'], args.min_pnl)
