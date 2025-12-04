@@ -73,9 +73,9 @@ def get_detailed_strategy_stats(db: DatabaseHelper):
             )
             JOIN optimization.simulation_results sr ON (
                 sr.signal_id = ss.signal_id
-                AND sr.sl_pct = bp.best_sl
-                AND sr.ts_activation_pct = bp.best_ts_act
-                AND sr.ts_callback_pct = bp.best_ts_cb
+                AND sr.sl_pct = bp.sl_pct
+                AND sr.ts_activation_pct = bp.ts_activation_pct
+                AND sr.ts_callback_pct = bp.ts_callback_pct
             )
             GROUP BY 
                 ss.strategy_name,
