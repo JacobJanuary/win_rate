@@ -11,7 +11,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import logging
 from datetime import datetime
 from optimization.utils.db_helper import DatabaseHelper
-from optimization.utils.trade_simulator import TradeSimulator
 
 logging.basicConfig(
     level=logging.INFO,
