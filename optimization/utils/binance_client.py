@@ -90,6 +90,9 @@ class BinanceClient:
                 logger.warning(f"Rate limit exceeded for {symbol}, waiting 60s...")
                 time.sleep(60)
                 return self.get_klines(symbol, interval, start_time, end_time, limit)
+            elif e.response.status_code == 400:  # Bad request - pair doesn't exist or delisted
+                logger.warning(f"Pair {symbol} not available on Binance Futures (delisted or invalid)")
+                return []  # Return empty list, not an error
             else:
                 logger.error(f"Binance API error for {symbol}: {e}")
                 raise

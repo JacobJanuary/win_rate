@@ -133,8 +133,7 @@ def extract_signals_for_strategy(db: DatabaseHelper, strategy):
     pattern_filter = ' OR '.join(pattern_conditions)
     
     # Query signals with CORRECT market_regime join
-    # NO LIMIT - get ALL matching signals
-    # 60 days period (like in original research)
+    # FILTER: Only Binance Futures pairs (active)
     query = f"""
         WITH signal_patterns_agg AS (
             SELECT 
@@ -147,9 +146,13 @@ def extract_signals_for_strategy(db: DatabaseHelper, strategy):
             FROM fas_v2.scoring_history sh
             JOIN fas_v2.sh_patterns shp ON shp.scoring_history_id = sh.id
             JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
+            INNER JOIN public.trading_pairs tp ON tp.symbol = sh.pair_symbol
             WHERE sh.timestamp >= NOW() - INTERVAL '60 days'
                 AND sh.timestamp < NOW() - INTERVAL '1 day'
                 AND ({pattern_filter})
+                AND tp.exchange_api_name = 'binance'
+                AND tp.contract_type_id = 1
+                AND tp.is_active = true
             GROUP BY sh.id, sh.pair_symbol, sh.timestamp, sh.total_score
             HAVING COUNT(DISTINCT sp.id) >= {len(patterns_list)}
         ),
