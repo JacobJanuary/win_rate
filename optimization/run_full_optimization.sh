@@ -33,27 +33,16 @@ echo "================================================"
 echo "📊 ЭТАП 1/4: Извлечение топ сигналов"
 echo "================================================"
 echo ""
-
-combinations=("LONG BULL" "LONG BEAR" "LONG NEUTRAL" "SHORT BULL" "SHORT BEAR" "SHORT NEUTRAL")
-total=${#combinations[@]}
-current=0
-
-for combo in "${combinations[@]}"; do
-    current=$((current + 1))
-    echo ""
-    echo "[$current/$total] Обработка: $combo"
-    echo "-----------------------------------"
-    
-    if python3 extract_top_signals.py $combo; then
-        echo "✅ $combo - готово"
-    else
-        echo "❌ Ошибка при обработке $combo"
-        exit 1
-    fi
-done
-
+echo "Обработка всех комбинаций signal_type × market_regime..."
 echo ""
-echo "✅ Этап 1 завершён: Все сигналы извлечены"
+
+if python3 extract_top_signals.py --rebuild; then
+    echo ""
+    echo "✅ Этап 1 завершён: Все сигналы извлечены"
+else
+    echo "❌ Ошибка при извлечении сигналов"
+    exit 1
+fi
 
 # Этап 2: Загрузка свечей
 echo ""
