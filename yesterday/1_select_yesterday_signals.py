@@ -84,7 +84,6 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
             JOIN fas_v2.sh_patterns shp ON shp.scoring_history_id = sh.id
             JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
             INNER JOIN public.trading_pairs tp ON tp.pair_symbol = sh.pair_symbol
-            LEFT JOIN web.scoring_history_results_v2 shr ON shr.scoring_history_id = sh.id
             LEFT JOIN fas_v2.sh_regime shr_regime ON shr_regime.scoring_history_id = sh.id
             LEFT JOIN fas_v2.market_regime mr ON mr.id = shr_regime.signal_regime_id
             WHERE sh.timestamp >= %(start_time)s
@@ -92,8 +91,7 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
                 AND tp.exchange_id = 1
                 AND tp.contract_type_id = 1
                 AND tp.is_active = true
-                AND shr.signal_type IS NOT NULL
-            GROUP BY sh.id, sh.pair_symbol, sh.timestamp, sh.total_score, shr.signal_type, mr.regime
+            GROUP BY sh.id, sh.pair_symbol, sh.timestamp, sh.total_score, mr.regime
             HAVING COUNT(DISTINCT sp.id) >= 2  -- Multi-pattern only
         )
         SELECT
@@ -101,7 +99,7 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
             yw.pair_symbol,
             yw.signal_timestamp,
             yw.signal_timestamp + INTERVAL '17 minutes' as entry_time,
-            yw.signal_type,
+            bs.signal_type,  -- From best_parameters, not results_v2
             yw.patterns,
             yw.market_regime,
             yw.total_score,
@@ -111,8 +109,7 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
             bs.ts_callback_pct
         FROM yesterday_window yw
         JOIN best_strategies bs ON (
-            bs.signal_type = yw.signal_type
-            AND bs.market_regime = yw.market_regime
+            bs.market_regime = yw.market_regime
             AND yw.patterns @> bs.required_patterns  -- EXACT pattern match
         )
         WHERE yw.market_regime IS NOT NULL
