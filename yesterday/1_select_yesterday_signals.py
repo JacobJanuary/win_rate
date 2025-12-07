@@ -74,9 +74,6 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
                 -- Aggregate patterns
                 ARRAY_AGG(DISTINCT sp.pattern_type || '_' || sp.timeframe) as patterns,
                 
-                -- Get result
-                shr.signal_type,
-                
                 -- Get market regime
                 mr.regime as market_regime
                 
