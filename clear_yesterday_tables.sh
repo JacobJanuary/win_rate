@@ -4,12 +4,29 @@
 
 set -e
 
+# Загрузить переменные из .env
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
+else
+    echo "❌ Файл .env не найден!"
+    exit 1
+fi
+
+# Проверить обязательные переменные
+if [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ] || [ -z "$DB_NAME" ] || [ -z "$DB_USER" ]; then
+    echo "❌ Не все переменные заданы в .env файле!"
+    echo "Требуются: DB_HOST, DB_PORT, DB_NAME, DB_USER"
+    exit 1
+fi
+
 echo "🔴 ВНИМАНИЕ: Этот скрипт очистит все yesterday таблицы!"
 echo ""
 echo "Будут очищены:"
 echo "  - optimization.yesterday_results"
 echo "  - optimization.yesterday_signals"
 echo "  - optimization.yesterday_candles"
+echo ""
+echo "База данных: $DB_HOST:$DB_PORT/$DB_NAME (пользователь: $DB_USER)"
 echo ""
 read -p "Продолжить? (yes/no): " confirm
 
@@ -21,7 +38,7 @@ fi
 echo ""
 echo "📊 Текущее состояние таблиц:"
 
-psql -h localhost -p 5433 -U elcrypto -d fox_crypto_new << 'EOF'
+psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" << 'EOF'
 SELECT 
     'yesterday_signals' as table_name, 
     COUNT(*) as count,
@@ -44,7 +61,7 @@ EOF
 echo ""
 echo "🗑️  Очистка таблиц..."
 
-psql -h localhost -p 5433 -U elcrypto -d fox_crypto_new << 'EOF'
+psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" << 'EOF'
 TRUNCATE TABLE optimization.yesterday_results CASCADE;
 TRUNCATE TABLE optimization.yesterday_signals CASCADE;
 TRUNCATE TABLE optimization.yesterday_candles CASCADE;
@@ -55,7 +72,7 @@ echo "✅ Таблицы очищены!"
 echo ""
 echo "📊 Проверка:"
 
-psql -h localhost -p 5433 -U elcrypto -d fox_crypto_new << 'EOF'
+psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" << 'EOF'
 SELECT 
     'yesterday_signals' as table_name, COUNT(*) as count 
 FROM optimization.yesterday_signals
