@@ -163,11 +163,8 @@ def extract_signals_for_strategy(db: DatabaseHelper, strategy):
                 mr.regime as market_regime
             FROM signal_patterns_agg spa
             INNER JOIN web.scoring_history_results_v2 shr ON shr.scoring_history_id = spa.signal_id
-            LEFT JOIN fas_v2.market_regime mr ON (
-                mr.timeframe = '15m'
-                AND mr.timestamp <= spa.signal_timestamp
-                AND mr.timestamp > spa.signal_timestamp - INTERVAL '1 hour'
-            )
+            LEFT JOIN fas_v2.sh_regime shr_regime ON shr_regime.scoring_history_id = spa.signal_id
+            LEFT JOIN fas_v2.market_regime mr ON mr.id = shr_regime.signal_regime_id
             WHERE shr.signal_type = '{signal_type}'
                 AND (mr.regime = '{market_regime}' OR mr.regime IS NULL)
         )

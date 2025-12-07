@@ -85,11 +85,8 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
             JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
             INNER JOIN public.trading_pairs tp ON tp.pair_symbol = sh.pair_symbol
             LEFT JOIN web.scoring_history_results_v2 shr ON shr.scoring_history_id = sh.id
-            LEFT JOIN fas_v2.market_regime mr ON (
-                mr.timeframe = '15m'
-                AND mr.timestamp <= sh.timestamp
-                AND mr.timestamp > sh.timestamp - INTERVAL '1 hour'
-            )
+            LEFT JOIN fas_v2.sh_regime shr_regime ON shr_regime.scoring_history_id = sh.id
+            LEFT JOIN fas_v2.market_regime mr ON mr.id = shr_regime.signal_regime_id
             WHERE sh.timestamp >= %(start_time)s
                 AND sh.timestamp < %(end_time)s
                 AND tp.exchange_id = 1

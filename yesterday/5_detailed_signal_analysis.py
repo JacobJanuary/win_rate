@@ -9,7 +9,8 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
-from datetime import datetime
+import argparse
+from datetime import datetime, timedelta
 from optimization.utils.db_helper import DatabaseHelper
 
 logging.basicConfig(
@@ -19,8 +20,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_yesterday_results(db: DatabaseHelper):
-    """Get all yesterday signals with their simulation results"""
+def get_yesterday_results(db: DatabaseHelper, days: int = 2):
+    """Get signals from specified number of days ago with their simulation results
+    
+    Args:
+        db: Database helper instance
+        days: Number of days to look back (default 2 = yesterday, 24-48hrs ago)
+    """
+    
+    # Calculate time range
+    now = datetime.now()
+    end_time = now - timedelta(days=(days-1))
+    start_time = now - timedelta(days=days)
     
     query = """
         SELECT 
@@ -39,10 +50,12 @@ def get_yesterday_results(db: DatabaseHelper):
             yr.max_drawdown_pct
         FROM optimization.yesterday_signals ys
         LEFT JOIN optimization.yesterday_results yr ON yr.signal_id = ys.signal_id
+        WHERE ys.entry_time >= %(start_time)s 
+          AND ys.entry_time < %(end_time)s
         ORDER BY ys.entry_time
     """
     
-    return db.execute_query(query)
+    return db.execute_query(query, {'start_time': start_time, 'end_time': end_time})
 
 
 def classify_exit_type(exit_type):
@@ -68,11 +81,22 @@ def format_pnl(pnl_pct):
         return f'{pnl_pct:.2f}%'
 
 
-def print_detailed_analysis(signals):
-    """Print detailed analysis for each signal"""
+def print_detailed_analysis(signals, days: int):
+    """Print detailed analysis for each signal
+    
+    Args:
+        signals: List of signal dictionaries
+        days: Number of days analyzed
+    """
+    
+    # Calculate date range for display
+    now = datetime.now()
+    end_time = now - timedelta(days=(days-1))
+    start_time = now - timedelta(days=days)
     
     print("\n" + "="*120)
-    print("📊 DETAILED YESTERDAY SIGNALS ANALYSIS")
+    print(f"📊 DETAILED SIGNALS ANALYSIS - Last {days} day(s)")
+    print(f"   Period: {start_time.strftime('%Y-%m-%d %H:%M')} to {end_time.strftime('%Y-%m-%d %H:%M')}")
     print("="*120)
     
     # Statistics
@@ -184,24 +208,47 @@ def print_detailed_analysis(signals):
 
 def main():
     """Main execution"""
-    logger.info("Starting detailed yesterday signals analysis...")
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='Detailed analysis of signals with exit types and PnL',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 5_detailed_signal_analysis.py              # Analyze yesterday (24-48hrs ago)
+  python3 5_detailed_signal_analysis.py --days 1     # Analyze last 24 hours
+  python3 5_detailed_signal_analysis.py --days 7     # Analyze last week
+  python3 5_detailed_signal_analysis.py --days 30    # Analyze last 30 days
+        """
+    )
+    parser.add_argument(
+        '--days',
+        type=int,
+        default=2,
+        choices=range(1, 31),
+        metavar='DAYS',
+        help='Number of days to analyze (1-30, default: 2 = yesterday)'
+    )
+    
+    args = parser.parse_args()
+    
+    logger.info(f"Starting detailed signal analysis for last {args.days} day(s)...")
     
     db = DatabaseHelper()
     db.connect()
     
     try:
         # Get results
-        signals = get_yesterday_results(db)
+        signals = get_yesterday_results(db, args.days)
         
         if not signals:
-            logger.warning("No signals found in yesterday_signals table")
+            logger.warning(f"No signals found for the last {args.days} day(s)")
             logger.info("Run 1_select_yesterday_signals.py first")
             return
         
         # Print analysis
-        print_detailed_analysis(signals)
+        print_detailed_analysis(signals, args.days)
         
-        logger.info(f"\n✅ Analysis complete! Analyzed {len(signals)} signals")
+        logger.info(f"\n✅ Analysis complete! Analyzed {len(signals)} signals from last {args.days} day(s)")
         
     except Exception as e:
         logger.error(f"Error during analysis: {e}")

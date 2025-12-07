@@ -1,3 +1,87 @@
-_pycache__
-.env
-.venv
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Database
+*.db
+*.sqlite
+
+# Test & Research files
+*_test.py
+*_backup.py
+test_*.py
+explore_*.py
+analyze_*.py
+find_*.py
+correlate_*.py
+calculate_*.py
+
+# But keep these important analysis scripts
+!analyze_scoring_history_v3.py
+
+# Data files (generated)
+*.csv
+*.txt
+*.json
+results/*.csv
+results/*.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env.local
+.env.*.local
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# Optimization system - KEEP these
+!optimization/**/*.py
+!config/*.yaml
+!migrations/*.sql
+!run_optimization.sh
+!OPTIMIZATION_README.md
+!DATABASE_SAFETY.md
+!requirements.txt
+!.env
+
+# Keep essential CSVs for optimization input
+!multi_patterns_with_regime.csv
+!patterns_with_market_regime.csv
