@@ -309,6 +309,11 @@ class SimulationEngine:
                 ts_callback_pct=ts_cb
             )
             
+            # Skip if simulation returned None (shouldn't happen, but be safe)
+            if result is None:
+                logger.warning(f"Simulation returned None for signal {signal.get('signal_id', 'unknown')}")
+                continue
+            
             results.append({
                 'signal_id': signal['signal_id'],
                 'sl_pct': sl,
