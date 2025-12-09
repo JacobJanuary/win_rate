@@ -5,6 +5,7 @@ Binance API client for fetching historical candles
 import requests
 import time
 import logging
+import os
 from typing import List, Dict
 import yaml
 
@@ -16,7 +17,12 @@ class BinanceClient:
     
     def __init__(self, config_path='config/optimization_config.yaml'):
         """Initialize with config"""
-        with open(config_path, 'r') as f:
+        # Find project root (where config/ directory is)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(os.path.dirname(current_dir))
+        full_config_path = os.path.join(project_root, config_path)
+        
+        with open(full_config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
         self.base_url = self.config['binance']['base_url']
