@@ -20,11 +20,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_signals_with_best_params(db: DatabaseHelper, min_total_pnl: float = 180):
+def get_signals_with_best_params(db: DatabaseHelper, min_total_pnl: float = 180, days: int = 30):
     """
     Get signals with their best optimized parameters
     
     For each signal, finds the best strategy (highest total_pnl > threshold)
+    Filters signals to last N days
     """
     
     query = f"""
@@ -86,6 +87,7 @@ def get_signals_with_best_params(db: DatabaseHelper, min_total_pnl: float = 180)
                 AND sr.ts_activation_pct = bs.ts_activation_pct
                 AND sr.ts_callback_pct = bs.ts_callback_pct
             )
+            WHERE ss.signal_timestamp >= NOW() - INTERVAL '{days} days'
         )
         SELECT * FROM signals_with_params
         WHERE pnl_pct IS NOT NULL  -- Only signals with simulation results
@@ -408,12 +410,15 @@ def main():
                        help='Position size in USD (default: 100)')
     parser.add_argument('--leverage', type=float, default=10,
                        help='Leverage multiplier (default: 10x)')
+    parser.add_argument('--days', type=int, default=30,
+                       help='Number of days to analyze (default: 30)')
     args = parser.parse_args()
     
     logger.info("=" * 120)
     logger.info("BACKTEST WITH OPTIMIZED PARAMETERS")
     logger.info("=" * 120)
     logger.info(f"Strategy filter: total_pnl > {args.min_pnl}%")
+    logger.info(f"Time period: Last {args.days} days")
     logger.info(f"Position size: ${args.position_size}")
     logger.info(f"Leverage: {args.leverage}x\n")
     
@@ -423,8 +428,8 @@ def main():
     db.connect()
     
     # Get signals with best params
-    logger.info(f"Loading signals with optimized parameters (strategy total_pnl > {args.min_pnl}%)...")
-    results = get_signals_with_best_params(db, args.min_pnl)
+    logger.info(f"Loading signals with optimized parameters (strategy total_pnl > {args.min_pnl}%, last {args.days} days)...")
+    results = get_signals_with_best_params(db, args.min_pnl, args.days)
     
     if not results:
         logger.warning(f"No signals found with strategy total_pnl > {args.min_pnl}%")

@@ -113,13 +113,8 @@ def load_top_strategies(db: DatabaseHelper):
     return df
 
 
-def extract_signals_for_strategy(db: DatabaseHelper, strategy):
+def extract_signals_for_strategy(db: DatabaseHelper, patterns_list, signal_type, market_regime, days=30):
     """Extract actual signals for a strategy"""
-    
-    # patterns is already a list from hardcoded data
-    patterns_list = strategy['patterns']
-    signal_type = strategy['signal_type']
-    market_regime = strategy['market_regime']
     
     # Build pattern filter
     pattern_conditions = []
@@ -147,7 +142,7 @@ def extract_signals_for_strategy(db: DatabaseHelper, strategy):
             JOIN fas_v2.sh_patterns shp ON shp.scoring_history_id = sh.id
             JOIN fas_v2.signal_patterns sp ON sp.id = shp.signal_patterns_id
             INNER JOIN public.trading_pairs tp ON tp.pair_symbol = sh.pair_symbol
-            WHERE sh.timestamp >= NOW() - INTERVAL '60 days'
+            WHERE sh.timestamp >= NOW() - INTERVAL '{days} days'
                 AND sh.timestamp < NOW() - INTERVAL '1 day'
                 AND ({pattern_filter})
                 AND tp.exchange_id = 1
@@ -191,6 +186,8 @@ def main():
                        help='Clear existing signals and rebuild from scratch')
     parser.add_argument('--append', action='store_true', default=True,
                        help='Append new signals only (default)')
+    parser.add_argument('--days', type=int, default=30,
+                       help='Number of days to analyze (default: 30)')
     args = parser.parse_args()
     
     # Determine mode
@@ -199,10 +196,11 @@ def main():
     else:
         mode = 'APPEND'
     
-    logger.info("=" * 100)
-    logger.info("SIGNAL EXTRACTION FOR OPTIMIZATION")
-    logger.info("=" * 100)
+    logger.info("=" * 120)
+    logger.info("EXTRACT TOP MULTI-PATTERN SIGNALS")
+    logger.info("=" * 120)
     logger.info(f"Mode: {mode}")
+    logger.info(f"Time period: Last {args.days} days\n")
     logger.info("")
     
     # Connect to database
@@ -237,7 +235,13 @@ def main():
         logger.info(f"\n[{idx}/20] {strategy_name[:100]}...")
         
         try:
-            signals = extract_signals_for_strategy(db, strategy)
+            signals = extract_signals_for_strategy(
+                db, 
+                strategy['patterns'],
+                strategy['signal_type'],
+                strategy['market_regime'],
+                args.days
+            )
         except Exception as e:
             logger.error(f"  ❌ Strategy failed: {e}")
             # Rollback and reconnect on error

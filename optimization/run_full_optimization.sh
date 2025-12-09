@@ -1,14 +1,37 @@
 #!/bin/bash
 # Полный цикл оптимизации
 # Запускает все этапы автоматически
+#
+# Usage:
+#   ./run_full_optimization.sh           # Default: 30 days
+#   ./run_full_optimization.sh --days 14 # Last 14 days
 
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
+# Parse arguments
+DAYS=30
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --days)
+            DAYS="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--days N]"
+            exit 1
+            ;;
+    esac
+done
+
 echo "🚀 Запуск полного цикла оптимизации"
 echo "===================================="
+echo ""
+echo "Параметры:"
+echo "  Период анализа: последние $DAYS дней"
 echo ""
 echo "Этапы:"
 echo "  1. Извлечение сигналов (6 комбинаций)"
@@ -34,9 +57,10 @@ echo "📊 ЭТАП 1/4: Извлечение топ сигналов"
 echo "================================================"
 echo ""
 echo "Обработка всех комбинаций signal_type × market_regime..."
+echo "Период: последние $DAYS дней"
 echo ""
 
-if python3 extract_top_signals.py --rebuild; then
+if python3 extract_top_signals.py --rebuild --days "$DAYS"; then
     echo ""
     echo "✅ Этап 1 завершён: Все сигналы извлечены"
 else
