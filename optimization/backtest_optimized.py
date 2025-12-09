@@ -117,7 +117,13 @@ def calculate_portfolio_metrics(results):
     avg_win = df[df['pnl_pct'] > 0]['pnl_pct'].mean() if winning_trades > 0 else 0
     avg_loss = df[df['pnl_pct'] <= 0]['pnl_pct'].mean() if losing_trades > 0 else 0
     
-    profit_factor = abs(avg_win * winning_trades / (avg_loss * losing_trades)) if (losing_trades > 0 and avg_loss != 0) else None
+    # Better profit factor calculation
+    if losing_trades > 0:
+        total_wins = df[df['pnl_pct'] > 0]['pnl_pct'].sum()
+        total_losses = abs(df[df['pnl_pct'] <= 0]['pnl_pct'].sum())
+        profit_factor = total_wins / total_losses if total_losses > 0 else None
+    else:
+        profit_factor = None
     
     total_pnl = df['pnl_pct'].sum()
     avg_pnl = df['pnl_pct'].mean()
@@ -272,6 +278,7 @@ def simulate_capital_flow(df, position_size=100, leverage=10):
     current_date = None
     daily_trades_open = 0
     daily_trades_closed = 0
+    daily_pnl = 0  # Track daily PnL in USD
     
     for idx, event in events_df.iterrows():
         event_date = event['timestamp'].date()
@@ -282,12 +289,14 @@ def simulate_capital_flow(df, position_size=100, leverage=10):
                 'date': current_date,
                 'trades_opened': daily_trades_open,
                 'trades_closed': daily_trades_closed,
+                'daily_pnl_usd': daily_pnl,
                 'frozen': frozen,
                 'free_balance': balance,
                 'total_balance': balance + frozen
             })
             daily_trades_open = 0
             daily_trades_closed = 0
+            daily_pnl = 0
         
         current_date = event_date
         
@@ -299,6 +308,7 @@ def simulate_capital_flow(df, position_size=100, leverage=10):
             balance += event['amount']   # +margin + PnL
             frozen -= margin_per_position  # -margin
             daily_trades_closed += 1
+            daily_pnl += event.get('pnl', 0)  # Track daily PnL
         
         # Track minimum balance (capital requirement)
         min_balance = min(min_balance, balance)
@@ -309,13 +319,19 @@ def simulate_capital_flow(df, position_size=100, leverage=10):
             'date': current_date,
             'trades_opened': daily_trades_open,
             'trades_closed': daily_trades_closed,
+            'daily_pnl_usd': daily_pnl,
             'frozen': frozen,
             'free_balance': balance,
             'total_balance': balance + frozen
         })
     
+    # Add cumulative PnL column
+    df_daily = pd.DataFrame(daily_stats)
+    if len(df_daily) > 0:
+        df_daily['cumulative_pnl_usd'] = df_daily['daily_pnl_usd'].cumsum()
+    
     return {
-        'daily_stats': pd.DataFrame(daily_stats),
+        'daily_stats': df_daily if len(df_daily) > 0 else pd.DataFrame(daily_stats),
         'capital_required': abs(min_balance),
         'final_balance': balance,
         'final_frozen': frozen,
@@ -338,12 +354,15 @@ def print_capital_report(capital_sim, position_size, leverage):
     print(f"   Margin Required: ${margin_per_position:.2f} per trade ({100/leverage:.1f}% of position)")
     
     print(f"\n📊 DAILY BALANCE REPORT:")
-    print("-" * 120)
-    print(f"{'Date':<12} {'Opened':<8} {'Closed':<8} {'Frozen $':<12} {'Free $':<12} {'Total $':<12}")
-    print("-" * 120)
+    print("-" * 150)
+    print(f"{'Date':<12} {'Opened':<8} {'Closed':<8} {'Daily PnL $':<13} {'Cumul PnL $':<13} {'Frozen $':<12} {'Free $':<12} {'Total $':<12}")
+    print("-" * 150)
     
     for idx, row in capital_sim['daily_stats'].iterrows():
+        daily_pnl = row.get('daily_pnl_usd', 0)
+        cumul_pnl = row.get('cumulative_pnl_usd', 0)
         print(f"{str(row['date']):<12} {row['trades_opened']:<8} {row['trades_closed']:<8} "
+              f"{daily_pnl:>11.2f} {cumul_pnl:>11.2f} "
               f"{row['frozen']:>10.2f} {row['free_balance']:>10.2f} {row['total_balance']:>10.2f}")
     
     print("-" * 120)
@@ -358,13 +377,23 @@ def print_capital_report(capital_sim, position_size, leverage):
     print(f"   Total Balance: ${capital_sim['total_final']:,.2f}")
     
     if capital_sim['capital_required'] > 0:
-        # ROI = profit / required capital (no -1 needed since balance starts at 0)
-        roi = (capital_sim['total_final'] / capital_sim['capital_required']) * 100
-        print(f"   ROI (on required capital): {roi:,.2f}% per month")
+        # Calculate actual ROI (profit / capital)
+        roi = ((capital_sim['total_final'] - capital_sim['capital_required']) / capital_sim['capital_required']) * 100
+        
+        # Calculate time period and annualized returns
+        days = (capital_sim['daily_stats']['date'].max() - capital_sim['daily_stats']['date'].min()).days + 1
+        roi_daily = roi / days if days > 0 else 0
+        roi_monthly = roi_daily * 30
+        roi_annual = roi_daily * 365
+        
+        print(f"   ROI: {roi:.2f}% over {days} days")
+        print(f"   Daily ROI: {roi_daily:.3f}%")
+        print(f"   Monthly ROI (projected): {roi_monthly:.2f}%")
+        print(f"   Annual ROI (projected): {roi_annual:.2f}%")
         print(f"\n💡 INTERPRETATION:")
         print(f"   Starting capital needed: ${capital_sim['capital_required']:,.2f}")
-        print(f"   Profit after {len(capital_sim['daily_stats'])} days: ${capital_sim['total_final']:,.2f}")
-        print(f"   Monthly return: {roi:.2f}%")
+        print(f"   Profit after {days} days: ${capital_sim['total_final']:,.2f}")
+        print(f"   Total return: {roi:.2f}%")
     
     print("=" * 120)
 
