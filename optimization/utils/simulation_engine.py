@@ -132,25 +132,142 @@ class SimulationEngine:
                     # Update TS trigger (trail downwards)
                     new_trigger = low * (1 + ts_callback_pct/100)
                     ts_trigger_price = min(ts_trigger_price, new_trigger)
+            
+            # Check timeout exit (after SL/TS checks)
+            timeout_result = self._check_timeout_exit(
+                candles, entry_price, signal_type, idx,
+                max_profit, max_drawdown
+            )
+            
+            if timeout_result:
+                return timeout_result
         
-        # 24h time limit reached
-        final_candle = candles[-1]
-        final_price = float(final_candle['close_price'])
+        # Fallback: should not reach here if we have 1440 candles
+        # But handle edge case of fewer candles
+        return self._check_timeout_exit(
+            candles, entry_price, signal_type, len(candles) - 1,
+            max_profit, max_drawdown
+        )
+    
+    def _check_timeout_exit(
+        self,
+        candles: List[Dict],
+        entry_price: float,
+        signal_type: str,
+        current_idx: int,
+        max_profit: float,
+        max_drawdown: float
+    ) -> Dict:
+        """
+        Check for timeout-based exit with graduated strategy
         
+        Timeline:
+        - 0-20h (0-1199 min): No timeout action
+        - 20-21h (1200-1259 min): Exit at breakeven if profitable
+        - 21h (1260 min): Force exit at -1%
+        - 22h (1320 min): Force exit at -2%
+        - 23h (1380 min): Force exit at -3%
+        - 24h (1440 min): Force exit at market
+        
+        Args:
+            candles: List of candles
+            entry_price: Entry price
+            signal_type: 'LONG' or 'SHORT'
+            current_idx: Current candle index
+            max_profit: Maximum profit achieved
+            max_drawdown: Maximum drawdown
+        
+        Returns:
+            Exit result dict if timeout triggered, None otherwise
+        """
+        minutes_held = current_idx + 1
+        
+        # No timeout action before hour 20
+        if minutes_held < 1200:
+            return None
+        
+        current_candle = candles[current_idx]
+        current_price = float(current_candle['close_price'])
+        open_time = int(current_candle['open_time'])
+        
+        # Calculate current PnL
         if signal_type == 'LONG':
-            final_pnl = (final_price - entry_price) / entry_price * 100
+            current_pnl = (current_price - entry_price) / entry_price * 100
         else:
-            final_pnl = (entry_price - final_price) / entry_price * 100
+            current_pnl = (entry_price - current_price) / entry_price * 100
         
-        return {
-            'exit_type': 'TIME_LIMIT',
-            'exit_price': final_price,
-            'exit_time': int(final_candle['open_time']),
-            'pnl_pct': final_pnl,
-            'max_profit_pct': max_profit,
-            'max_drawdown_pct': max_drawdown,
-            'hold_duration_minutes': len(candles)
-        }
+        # Hour 20-21: Breakeven exit if profitable
+        if 1200 <= minutes_held < 1260:
+            if current_pnl > 0:
+                # Exit at entry price (breakeven)
+                logger.debug(f"Breakeven exit at {minutes_held} min, PnL was {current_pnl:.2f}%")
+                return {
+                    'exit_type': 'TIMEOUT_BREAKEVEN',
+                    'exit_price': entry_price,
+                    'exit_time': open_time,
+                    'pnl_pct': 0.0,
+                    'max_profit_pct': max_profit,
+                    'max_drawdown_pct': max_drawdown,
+                    'hold_duration_minutes': minutes_held
+                }
+            return None  # Continue if not profitable
+        
+        # Hour 21: Force exit at -1%
+        elif minutes_held == 1260:
+            exit_price = entry_price * (1 - 0.01) if signal_type == 'LONG' else entry_price * (1 + 0.01)
+            logger.debug(f"21h timeout exit at -1%")
+            return {
+                'exit_type': 'TIMEOUT_21H',
+                'exit_price': exit_price,
+                'exit_time': open_time,
+                'pnl_pct': -1.0,
+                'max_profit_pct': max_profit,
+                'max_drawdown_pct': max_drawdown,
+                'hold_duration_minutes': minutes_held
+            }
+        
+        # Hour 22: Force exit at -2%
+        elif minutes_held == 1320:
+            exit_price = entry_price * (1 - 0.02) if signal_type == 'LONG' else entry_price * (1 + 0.02)
+            logger.debug(f"22h timeout exit at -2%")
+            return {
+                'exit_type': 'TIMEOUT_22H',
+                'exit_price': exit_price,
+                'exit_time': open_time,
+                'pnl_pct': -2.0,
+                'max_profit_pct': max_profit,
+                'max_drawdown_pct': max_drawdown,
+                'hold_duration_minutes': minutes_held
+            }
+        
+        # Hour 23: Force exit at -3%
+        elif minutes_held == 1380:
+            exit_price = entry_price * (1 - 0.03) if signal_type == 'LONG' else entry_price * (1 + 0.03)
+            logger.debug(f"23h timeout exit at -3%")
+            return {
+                'exit_type': 'TIMEOUT_23H',
+                'exit_price': exit_price,
+                'exit_time': open_time,
+                'pnl_pct': -3.0,
+                'max_profit_pct': max_profit,
+                'max_drawdown_pct': max_drawdown,
+                'hold_duration_minutes': minutes_held
+            }
+        
+        # Hour 24: Force exit at market
+        elif minutes_held >= 1440:
+            logger.debug(f"24h timeout exit at market: {current_pnl:.2f}%")
+            return {
+                'exit_type': 'TIMEOUT_24H',
+                'exit_price': current_price,
+                'exit_time': open_time,
+                'pnl_pct': current_pnl,
+                'max_profit_pct': max_profit,
+                'max_drawdown_pct': max_drawdown,
+                'hold_duration_minutes': minutes_held
+            }
+        
+        return None  # No timeout action yet
     
     def _empty_result(self) -> Dict:
         """Return empty result for invalid simulations"""

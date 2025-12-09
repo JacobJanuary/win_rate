@@ -74,135 +74,29 @@ def load_candles_for_signal(db: DatabaseHelper, pair_symbol, entry_time):
 
 
 def simulate_signal(signal, candles):
-    """Simulate trade with given parameters"""
+    """
+    Simulate trade with given parameters using SimulationEngine
+    
+    Now uses the centralized SimulationEngine with dynamic timeout logic.
+    """
+    from optimization.utils.simulation_engine import SimulationEngine
     
     if not candles or len(candles) < 10:
         logger.warning(f"Insufficient candles for {signal['pair_symbol']}")
         return None
     
-    # Get entry price (first candle)
-    entry_price = float(candles[0]['open_price'])
+    # Use SimulationEngine for consistent logic
+    engine = SimulationEngine()
     
-    # Convert parameters
-    sl_pct = float(signal['sl_pct'])
-    ts_activation_pct = float(signal['ts_activation_pct'])
-    ts_callback_pct = float(signal['ts_callback_pct'])
-    signal_type = signal['signal_type']
+    result = engine.simulate_trade(
+        candles=candles,
+        signal_type=signal['signal_type'],
+        sl_pct=float(signal['sl_pct']),
+        ts_activation_pct=float(signal['ts_activation_pct']),
+        ts_callback_pct=float(signal['ts_callback_pct'])
+    )
     
-    # Calculate levels
-    if signal_type == 'LONG':
-        sl_price = entry_price * (1 - sl_pct / 100)
-        ts_activation_price = entry_price * (1 + ts_activation_pct / 100)
-    else:  # SHORT
-        sl_price = entry_price * (1 + sl_pct / 100)
-        ts_activation_price = entry_price * (1 - ts_activation_pct / 100)
-    
-    # Simulate
-    ts_active = False
-    ts_highest = entry_price if signal_type == 'LONG' else entry_price
-    max_profit = 0
-    max_drawdown = 0
-    
-    for idx, candle in enumerate(candles):
-        high = float(candle['high_price'])
-        low = float(candle['low_price'])
-        close = float(candle['close_price'])
-        
-        # Calculate current P&L
-        if signal_type == 'LONG':
-            current_pnl = (close / entry_price - 1) * 100
-            max_profit = max(max_profit, (high / entry_price - 1) * 100)
-            max_drawdown = min(max_drawdown, (low / entry_price - 1) * 100)
-            
-            # Check SL
-            if low <= sl_price:
-                return {
-                    'exit_type': 'SL',
-                    'exit_price': sl_price,
-                    'exit_time': int(candle['open_time']),
-                    'pnl_pct': -sl_pct,
-                    'max_profit_pct': max_profit,
-                    'max_drawdown_pct': max_drawdown,
-                    'hold_duration_minutes': idx
-                }
-            
-            # Check TS activation
-            if not ts_active and high >= ts_activation_price:
-                ts_active = True
-                ts_highest = high
-            
-            # Update TS
-            if ts_active:
-                ts_highest = max(ts_highest, high)
-                ts_exit_price = ts_highest * (1 - ts_callback_pct / 100)
-                
-                if low <= ts_exit_price:
-                    pnl = (ts_exit_price / entry_price - 1) * 100
-                    return {
-                        'exit_type': 'TS',
-                        'exit_price': ts_exit_price,
-                        'exit_time': int(candle['open_time']),
-                        'pnl_pct': pnl,
-                        'max_profit_pct': max_profit,
-                        'max_drawdown_pct': max_drawdown,
-                        'hold_duration_minutes': idx
-                    }
-        
-        else:  # SHORT
-            current_pnl = (1 - close / entry_price) * 100
-            max_profit = max(max_profit, (1 - low / entry_price) * 100)
-            max_drawdown = min(max_drawdown, (1 - high / entry_price) * 100)
-            
-            # Check SL
-            if high >= sl_price:
-                return {
-                    'exit_type': 'SL',
-                    'exit_price': sl_price,
-                    'exit_time': int(candle['open_time']),
-                    'pnl_pct': -sl_pct,
-                    'max_profit_pct': max_profit,
-                    'max_drawdown_pct': max_drawdown,
-                    'hold_duration_minutes': idx
-                }
-            
-            # Check TS activation
-            if not ts_active and low <= ts_activation_price:
-                ts_active = True
-                ts_highest = low
-            
-            # Update TS
-            if ts_active:
-                ts_highest = min(ts_highest, low)
-                ts_exit_price = ts_highest * (1 + ts_callback_pct / 100)
-                
-                if high >= ts_exit_price:
-                    pnl = (1 - ts_exit_price / entry_price) * 100
-                    return {
-                        'exit_type': 'TS',
-                        'exit_price': ts_exit_price,
-                        'exit_time': int(candle['open_time']),
-                        'pnl_pct': pnl,
-                        'max_profit_pct': max_profit,
-                        'max_drawdown_pct': max_drawdown,
-                        'hold_duration_minutes': idx
-                    }
-    
-    # Timeout (24 hours)
-    final_price = float(candles[-1]['close_price'])
-    if signal_type == 'LONG':
-        pnl = (final_price / entry_price - 1) * 100
-    else:
-        pnl = (1 - final_price / entry_price) * 100
-    
-    return {
-        'exit_type': 'TIME_LIMIT',
-        'exit_price': final_price,
-        'exit_time': int(candles[-1]['open_time']),
-        'pnl_pct': pnl,
-        'max_profit_pct': max_profit,
-        'max_drawdown_pct': max_drawdown,
-        'hold_duration_minutes': len(candles)
-    }
+    return result
 
 
 def save_result(db: DatabaseHelper, signal_id, sl_pct, ts_act, ts_cb, result):

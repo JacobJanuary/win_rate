@@ -121,6 +121,58 @@ def get_yesterday_signals(db: DatabaseHelper, min_total_pnl: float = 180):
     return db.execute_query(query, params)
 
 
+def filter_duplicate_signals(signals):
+    """
+    Filter out signals that would create overlapping positions
+    
+    Uses PositionTracker to ensure only one position per pair at a time.
+    Processes signals chronologically and blocks new signals for pairs
+    with active positions.
+    
+    Args:
+        signals: List of signal dictionaries with entry_time and pair_symbol
+    
+    Returns:
+        Filtered list of signals (no overlapping positions)
+    """
+    from optimization.utils.position_tracker import PositionTracker
+    
+    if not signals:
+        return signals
+    
+    tracker = PositionTracker()
+    filtered = []
+    
+    # CRITICAL: Sort by entry time to process chronologically
+    signals_sorted = sorted(signals, key=lambda s: s['entry_time'])
+    
+    logger.info("Filtering duplicate signals...")
+    logger.info(f"  Input signals: {len(signals_sorted)}")
+    
+    for signal in signals_sorted:
+        pair = signal['pair_symbol']
+        entry = signal['entry_time']
+        
+        # Check if position already active for this pair
+        if tracker.is_position_active(pair, entry):
+            tracker.filtered_count += 1
+            logger.debug(f"  Skipped {pair} at {entry} (position active)")
+            continue
+        
+        # Add signal and track position
+        filtered.append(signal)
+        tracker.add_position(pair, entry)
+    
+    stats = tracker.get_stats()
+    logger.info(f"  Filtered signals: {len(filtered)}")
+    logger.info(f"  Removed duplicates: {stats['filtered_signals']}")
+    if len(signals_sorted) > 0:
+        reduction = stats['filtered_signals'] / len(signals_sorted) * 100
+        logger.info(f"  Reduction: {reduction:.1f}%")
+    
+    return filtered
+
+
 def save_signals(db: DatabaseHelper, signals):
     """Save signals to yesterday_signals table"""
     
@@ -198,6 +250,15 @@ def main():
         return
     
     logger.info(f"Found {len(signals)} signals")
+    
+    # Filter duplicates (NEW: prevent overlapping positions)
+    logger.info("")
+    signals = filter_duplicate_signals(signals)
+    
+    if not signals:
+        logger.warning("No signals remaining after filtering!")
+        db.close()
+        return
     
     # Save to DB
     logger.info("\nSaving to yesterday_signals table...")

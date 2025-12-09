@@ -70,6 +70,57 @@ def load_signals_to_simulate(db: DatabaseHelper):
     return db.execute_query(query)
 
 
+def filter_duplicate_signals(signals):
+    """
+    Filter out signals that would create overlapping positions
+    
+    Uses PositionTracker to ensure only one position per pair at a time.
+    Processes signals chronologically and blocks new signals for pairs
+    with active positions.
+    
+    Args:
+        signals: List of signal dictionaries with entry_time and pair_symbol
+    
+    Returns:
+        Filtered list of signals (no overlapping positions)
+    """
+    from optimization.utils.position_tracker import PositionTracker
+    
+    if not signals:
+        return signals
+    
+    tracker = PositionTracker()
+    filtered = []
+    
+    # Already sorted by entry_time in query, but ensure it
+    signals_sorted = sorted(signals, key=lambda s: s['entry_time'])
+    
+    logger.info("Filtering duplicate signals...")
+    logger.info(f"  Input signals: {len(signals_sorted)}")
+    
+    for signal in signals_sorted:
+        pair = signal['pair_symbol']
+        entry = signal['entry_time']
+        
+        # Check if position already active for this pair
+        if tracker.is_position_active(pair, entry):
+            tracker.filtered_count += 1
+            continue
+        
+        # Add signal and track position
+        filtered.append(signal)
+        tracker.add_position(pair, entry)
+    
+    stats = tracker.get_stats()
+    logger.info(f"  Filtered signals: {len(filtered)}")
+    logger.info(f"  Removed duplicates: {stats['filtered_signals']}")
+    if len(signals_sorted) > 0:
+        reduction = stats['filtered_signals'] / len(signals_sorted) * 100
+        logger.info(f"  Reduction: {reduction:.1f}%")
+    
+    return filtered
+
+
 def load_candles_for_signal(db: DatabaseHelper, signal):
     """Load 1m candles for a signal"""
     entry_time_ms = int(signal['entry_time'].timestamp() * 1000)
@@ -179,6 +230,18 @@ def main():
     logger.info("Loading signals to simulate...")
     signals = load_signals_to_simulate(db)
     logger.info(f"Found {len(signals)} signals to simulate")
+    
+    # Filter duplicates (NEW: prevent overlapping positions)
+    if signals:
+        logger.info("")
+        signals = filter_duplicate_signals(signals)
+        
+        if not signals:
+            logger.warning("No signals remaining after filtering!")
+            db.close()
+            return
+        
+        logger.info(f"Proceeding with {len(signals)} filtered signals")
     
     # Calculate total simulations
     total_sims = len(signals) * len(param_combos)
