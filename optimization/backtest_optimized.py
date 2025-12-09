@@ -379,8 +379,9 @@ def print_capital_report(capital_sim, position_size, leverage):
     print(f"   Total Balance: ${capital_sim['total_final']:,.2f}")
     
     if capital_sim['capital_required'] > 0:
-        # Calculate actual ROI (profit / capital)
-        roi = ((capital_sim['total_final'] - capital_sim['capital_required']) / capital_sim['capital_required']) * 100
+        # Calculate ROI: profit / capital (we start with 0 balance)
+        # total_final is our profit, capital_required is max margin needed
+        roi = (capital_sim['total_final'] / capital_sim['capital_required']) * 100
         
         # Calculate time period and annualized returns
         days = (capital_sim['daily_stats']['date'].max() - capital_sim['daily_stats']['date'].min()).days + 1
@@ -395,7 +396,7 @@ def print_capital_report(capital_sim, position_size, leverage):
         print(f"\n💡 INTERPRETATION:")
         print(f"   Starting capital needed: ${capital_sim['capital_required']:,.2f}")
         print(f"   Profit after {days} days: ${capital_sim['total_final']:,.2f}")
-        print(f"   Total return: {roi:.2f}%")
+        print(f"   Return on capital: {roi:.2f}%")
     
     print("=" * 120)
 
