@@ -25,7 +25,12 @@ logger = logging.getLogger(__name__)
 
 def load_config():
     """Load optimization config"""
-    with open('config/optimization_config.yaml', 'r') as f:
+    # Find project root
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    config_path = os.path.join(project_root, 'config/optimization_config.yaml')
+    
+    with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
 
