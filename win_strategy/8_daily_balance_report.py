@@ -169,13 +169,8 @@ def simulate_daily_trading(daily_data, tracker):
         total_fees = 0
         capital_added = 0
         
-        # Close positions first
-        for sim in data['closed']:
-            if sim['signal_id'] in tracker.open_positions:
-                pnl, fee = tracker.close_position(sim['signal_id'], float(sim['pnl_pct']))
-                total_pnl += pnl
-                total_fees += fee
-                closed_count += 1
+        # IMPORTANT: Process opens BEFORE closes
+        # This ensures positions opened on previous days can be closed today
         
         # Open new positions
         for sim in data['opened']:
@@ -188,6 +183,14 @@ def simulate_daily_trading(daily_data, tracker):
             if tracker.can_open_position():
                 tracker.open_position(sim['signal_id'])
                 opened_count += 1
+        
+        # Close positions (may have been opened on previous days)
+        for sim in data['closed']:
+            if sim['signal_id'] in tracker.open_positions:
+                pnl, fee = tracker.close_position(sim['signal_id'], float(sim['pnl_pct']))
+                total_pnl += pnl
+                total_fees += fee
+                closed_count += 1
         
         # Record daily results
         daily_results.append({
