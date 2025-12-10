@@ -178,7 +178,7 @@ def save_signals(db: DatabaseHelper, combination_id: int, signals: list):
                 ON CONFLICT (combination_id, scoring_history_id) DO NOTHING
             """
             
-            db.execute_query(query, (
+            db.execute_update(query, (
                 combination_id,
                 signal['scoring_history_id'],
                 signal['pair_symbol'],

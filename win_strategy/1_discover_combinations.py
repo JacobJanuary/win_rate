@@ -139,7 +139,7 @@ def save_combinations(db: DatabaseHelper, combinations: list, days: int, mode: s
     
     if mode == 'rebuild':
         logger.info("Clearing existing combinations...")
-        db.execute_query("DELETE FROM optimization.winning_combinations")
+        db.execute_update("DELETE FROM optimization.winning_combinations")
         logger.info("✅ Cleared")
     
     if not combinations:
@@ -172,7 +172,7 @@ def save_combinations(db: DatabaseHelper, combinations: list, days: int, mode: s
                     discovered_at = NOW()
             """
             
-            db.execute_query(query, (
+            db.execute_update(query, (
                 name,
                 combo['patterns'],
                 combo['indicators'],

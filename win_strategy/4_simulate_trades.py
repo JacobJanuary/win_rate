@@ -136,7 +136,7 @@ def save_simulations(db: DatabaseHelper, simulations: list):
                 ON CONFLICT (signal_id, sl_pct, ts_activation_pct, ts_callback_pct) DO NOTHING
             """
             
-            db.execute_query(query, (
+            db.execute_update(query, (
                 sim['signal_id'],
                 sim['combination_id'],
                 sim['sl_pct'],

@@ -147,7 +147,7 @@ def save_best_parameters(db: DatabaseHelper, combination_id: int, params: dict, 
             updated_at = NOW()
     """
     
-    db.execute_query(query, (
+    db.execute_update(query, (
         combination_id,
         params['sl_pct'],
         params['ts_activation_pct'],

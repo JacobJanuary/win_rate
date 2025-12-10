@@ -86,7 +86,7 @@ def save_candles(db: DatabaseHelper, signal_id: int, pair_symbol: str, candles: 
                 ON CONFLICT (signal_id, open_time) DO NOTHING
             """
             
-            db.execute_query(query, (
+            db.execute_update(query, (
                 signal_id,
                 pair_symbol,
                 candle['open_time'],
