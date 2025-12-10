@@ -72,6 +72,15 @@ def aggregate_for_combination(db: DatabaseHelper, combination_id: int):
     
     df = pd.DataFrame(results)
     
+    # Convert Decimal columns to float for pandas operations
+    numeric_cols = ['sl_pct', 'ts_activation_pct', 'ts_callback_pct', 
+                    'win_rate', 'total_pnl_pct', 'avg_pnl_pct', 
+                    'avg_win_pct', 'avg_loss_pct', 'max_profit_pct', 
+                    'max_drawdown_pct', 'avg_hold_minutes']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = df[col].astype(float)
+    
     # Calculate profit factor
     df['profit_factor'] = df.apply(
         lambda row: abs(row['avg_win_pct'] * row['winning_trades'] / 
@@ -81,11 +90,14 @@ def aggregate_for_combination(db: DatabaseHelper, combination_id: int):
     )
     
     # Calculate Sharpe ratio (simplified)
-    df['sharpe_ratio'] = df.apply(
-        lambda row: row['avg_pnl_pct'] / df['avg_pnl_pct'].std()
-        if df['avg_pnl_pct'].std() > 0 else 0,
-        axis=1
-    )
+    if len(df) > 1:  # Need at least 2 rows for std
+        std_pnl = df['avg_pnl_pct'].std()
+        if std_pnl > 0:
+            df['sharpe_ratio'] = df['avg_pnl_pct'] / std_pnl
+        else:
+            df['sharpe_ratio'] = 0.0
+    else:
+        df['sharpe_ratio'] = 0.0
     
     return df
 
