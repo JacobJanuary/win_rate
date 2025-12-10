@@ -67,6 +67,10 @@ def find_matching_signals(db: DatabaseHelper, combination: dict, days: int):
     market_regime = combination['market_regime']
     
     # Build query to find matching signals
+    # Handle NULL market_regime and indicators by using conditional WHERE clauses
+    regime_condition = "AND shr.market_regime = %s" if market_regime else ""
+    indicators_condition = "AND sia.indicators = %s" if indicators else "AND sia.indicators IS NULL"
+    
     query = f"""
         WITH time_filtered_signals AS (
             SELECT 
@@ -84,7 +88,7 @@ def find_matching_signals(db: DatabaseHelper, combination: dict, days: int):
             WHERE sh.timestamp >= NOW() - INTERVAL '{days} days'
                 AND sh.timestamp < NOW() - INTERVAL '1 day'
                 AND shr.signal_type = %s
-                AND (shr.market_regime = %s OR %s IS NULL)
+                {regime_condition}
         ),
         signal_patterns_agg AS (
             SELECT 
@@ -139,17 +143,18 @@ def find_matching_signals(db: DatabaseHelper, combination: dict, days: int):
         JOIN signal_patterns_agg spa ON spa.scoring_history_id = tfs.scoring_history_id
         LEFT JOIN signal_indicators_agg sia ON sia.scoring_history_id = tfs.scoring_history_id
         WHERE spa.patterns = %s
-            AND (sia.indicators = %s OR (%s IS NULL AND sia.indicators IS NULL))
+            {indicators_condition}
     """
     
-    results = db.execute_query(query, (
-        signal_type,
-        market_regime,
-        market_regime,
-        patterns,
-        indicators,
-        indicators
-    ))
+    # Build params list based on what's needed
+    params = [signal_type]
+    if market_regime:
+        params.append(market_regime)
+    params.append(patterns)
+    if indicators:
+        params.append(indicators)
+    
+    results = db.execute_query(query, tuple(params))
     
     return results
 
