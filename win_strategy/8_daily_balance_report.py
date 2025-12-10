@@ -108,20 +108,30 @@ def load_all_simulations(db: DatabaseHelper, days: int):
             cs.signal_type,
             csim.pnl_pct,
             csim.exit_time,
-            csim.hold_duration_minutes
+            csim.hold_duration_minutes,
+            cs.combination_id,
+            csim.sl_pct,
+            csim.ts_activation_pct,
+            csim.ts_callback_pct
         FROM optimization.combination_signals cs
         JOIN optimization.combination_simulations csim ON csim.signal_id = cs.id
         JOIN optimization.combination_best_parameters cbp ON (
             cbp.combination_id = cs.combination_id
-            AND cbp.sl_pct = csim.sl_pct
-            AND cbp.ts_activation_pct = csim.ts_activation_pct
-            AND cbp.ts_callback_pct = csim.ts_callback_pct
+            AND CAST(cbp.sl_pct AS NUMERIC(5,2)) = CAST(csim.sl_pct AS NUMERIC(5,2))
+            AND CAST(cbp.ts_activation_pct AS NUMERIC(5,2)) = CAST(csim.ts_activation_pct AS NUMERIC(5,2))
+            AND CAST(cbp.ts_callback_pct AS NUMERIC(5,2)) = CAST(csim.ts_callback_pct AS NUMERIC(5,2))
         )
         WHERE cs.signal_timestamp >= NOW() - INTERVAL '{days} days'
         ORDER BY cs.signal_timestamp
     """
     
-    return db.execute_query(query)
+    results = db.execute_query(query)
+    
+    # Debug: log first few results
+    if results:
+        logger.info(f"Sample simulation: {results[0]['pair_symbol']} - PnL: {results[0]['pnl_pct']}%, Duration: {results[0]['hold_duration_minutes']}min")
+    
+    return results
 
 
 def group_by_date(simulations):
