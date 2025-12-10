@@ -197,10 +197,62 @@ def main():
     logger.info("Generating report...")
     generate_report(results, output_file)
     
-    print(f"\n✅ Report generated: {output_file}")
-    print(f"   Total combinations: {len(results)}")
-    print(f"   Best win rate: {max(r['win_rate'] for r in results):.1f}%")
-    print(f"   Best total PnL: {max(r['total_pnl_pct'] for r in results):.1f}%")
+    # Print detailed results to console
+    print("\n" + "="*120)
+    print("🏆 TOP WINNING COMBINATIONS")
+    print("="*120)
+    
+    for idx, result in enumerate(results, 1):
+        print(f"\n#{idx} - {result['combination_name']}")
+        print("-" * 120)
+        
+        # Performance
+        print(f"\n📊 PERFORMANCE:")
+        print(f"   Win Rate:     {result['win_rate']:.1f}% ({result['winning_trades']}/{result['total_signals']} trades)")
+        print(f"   Total PnL:    {result['total_pnl_pct']:.1f}%")
+        print(f"   Avg PnL:      {result['avg_pnl_pct']:.2f}% per trade")
+        print(f"   Avg Win:      +{result['avg_win_pct']:.2f}%")
+        print(f"   Avg Loss:     {result['avg_loss_pct']:.2f}%")
+        if result['profit_factor']:
+            print(f"   Profit Factor: {float(result['profit_factor']):.2f}")
+        
+        # Parameters
+        print(f"\n⚙️  BEST PARAMETERS:")
+        print(f"   SL:            {result['sl_pct']}%")
+        print(f"   TS Activation: {result['ts_activation_pct']}%")
+        print(f"   TS Callback:   {result['ts_callback_pct']}%")
+        
+        # Strategy
+        print(f"\n🎯 STRATEGY:")
+        print(f"   Type:          {result['signal_type']}")
+        print(f"   Market Regime: {result['market_regime'] or 'ANY'}")
+        print(f"   Patterns:      {result['patterns']}")
+        if result['indicators']:
+            print(f"   Indicators:    {result['indicators']}")
+        
+        # Risk
+        print(f"\n⚠️  RISK METRICS:")
+        print(f"   Max Drawdown:  {result['max_drawdown_pct']:.2f}%")
+        print(f"   Avg Hold Time: {result['avg_hold_minutes']/60:.1f} hours")
+    
+    print("\n" + "="*120)
+    print("📊 SUMMARY")
+    print("="*120)
+    
+    avg_wr = sum(r['win_rate'] for r in results) / len(results)
+    avg_pnl = sum(r['total_pnl_pct'] for r in results) / len(results)
+    total_signals = sum(r['total_signals'] for r in results)
+    
+    print(f"Total Combinations:  {len(results)}")
+    print(f"Average Win Rate:    {avg_wr:.1f}%")
+    print(f"Average Total PnL:   {avg_pnl:.1f}%")
+    print(f"Total Signals:       {total_signals:,}")
+    print(f"Best Win Rate:       {max(r['win_rate'] for r in results):.1f}%")
+    print(f"Best Total PnL:      {max(r['total_pnl_pct'] for r in results):.1f}%")
+    
+    print("\n" + "="*120)
+    print(f"✅ Report saved to: {output_file}")
+    print("="*120)
     
     # Close connection
     db.close()
